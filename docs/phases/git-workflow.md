@@ -40,7 +40,7 @@ Before requesting review (even self-review, solo):
 
 - [ ] `uv run pytest` passes locally
 - [ ] `uv run ruff check .` and `uv run mypy` are clean
-- [ ] New code has tests — for `bpverify.inference`, tests must include at least one hand-computed
+- [ ] New code has tests — for `src.inference`, tests must include at least one hand-computed
       expected value, not just "it runs without crashing" (see `tests/test_hmt.py` for the pattern)
 - [ ] The PR description states which phase/task this closes (link to `docs/phases/phase-N-*.md`)
 

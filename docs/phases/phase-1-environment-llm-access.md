@@ -33,7 +33,7 @@ built around the wrong provider.
 
 ```mermaid
 flowchart LR
-    subgraph "bpverify.llm (what you're building)"
+    subgraph "src.llm (what you're building)"
         Proto["LLMClient protocol<br/>(fixed, given below)"]
         Fake["FakeLLMClient<br/>(build first)"]
         Cache["CachingLLMClient<br/>(wraps any client)"]
@@ -54,8 +54,8 @@ flowchart LR
 """The LLMClient protocol every backbone implementation must satisfy.
 
 Kept deliberately small: two methods cover everything the rest of the pipeline needs.
-bpverify.inference never imports this module (module-boundary rule, docs/01-architecture.md) --
-only bpverify.tree and bpverify.surrogate depend on it.
+src.inference never imports this module (module-boundary rule, docs/01-architecture.md) --
+only src.tree and src.surrogate depend on it.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ class LLMClient(Protocol):
 
 ```python
 """A deterministic, canned LLMClient for tests -- never makes a network call. This is what
-makes bpverify.tree (Phase 2) unit-testable with zero API key and zero flakiness.
+makes src.tree (Phase 2) unit-testable with zero API key and zero flakiness.
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from bpverify.llm.base import LLMClient
+from src.llm.base import LLMClient
 
 
 def _hash_key(*parts: Any) -> str:
@@ -286,7 +286,7 @@ before building anything on top of it.
 ## Suggested File Structure
 
 ```
-src/bpverify/llm/
+src/llm/
 ├── __init__.py
 ├── base.py              # the protocol -- fixed
 ├── fake.py               # build first
@@ -312,7 +312,7 @@ pass and you've confirmed a real API call works.
 
 ## Common Pitfalls
 
-- **Don't let `bpverify.llm` depend on `bpverify.tree` or `bpverify.inference`** — the dependency
+- **Don't let `src.llm` depend on `src.tree` or `src.inference`** — the dependency
   arrow only ever points the other way.
 - **Don't assume a provider's logprobs support is permanent** — re-check whenever you change
   models, not just once at the start.

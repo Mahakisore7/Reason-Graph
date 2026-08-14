@@ -21,28 +21,28 @@ flowchart TB
 
 ## Module Boundaries
 
-Each stage above maps to one Python package under `src/bpverify/`, kept independent so any one
+Each stage above maps to one Python package under `src/`, kept independent so any one
 can be unit-tested and swapped without touching the others.
 
 ```mermaid
 flowchart LR
-    subgraph llm["bpverify.llm"]
+    subgraph llm["src.llm"]
         L1["LLMClient (protocol)"]
         L2["OpenAIClient / LocalHFClient"]
         L3["Prompt templates"]
     end
-    subgraph tree["bpverify.tree"]
+    subgraph tree["src.tree"]
         T1["Graph construction<br/>(3 strategies)"]
         T2["NLI-based relationship labelling"]
     end
-    subgraph inference["bpverify.inference"]
+    subgraph inference["src.inference"]
         I1["hmt.py — exact tree BP<br/>(implemented, Phase 1)"]
         I2["loopy.py — general-graph BP<br/>(Phase 3)"]
     end
-    subgraph surrogate["bpverify.surrogate"]
+    subgraph surrogate["src.surrogate"]
         S1["Confidence predictor<br/>(Phase 4)"]
     end
-    subgraph eval["bpverify.eval"]
+    subgraph eval["src.eval"]
         E1["Metrics: AUROC / AUC-PR / F1"]
         E2["Benchmark loaders"]
     end
@@ -53,7 +53,7 @@ flowchart LR
     inference --> eval
 ```
 
-**Design rule:** `bpverify.inference` never imports `bpverify.llm` directly — it only consumes
+**Design rule:** `src.inference` never imports `src.llm` directly — it only consumes
 plain data (a graph of nodes with observed scores). This is what makes `hmt.py` fully unit-testable
 with hand-constructed numbers and no network access, no API key, and no mocking required (see
 `tests/test_hmt.py`).
@@ -91,7 +91,7 @@ before adding the part (cyclic message passing, convergence checking) that has n
 ```
 bp-verify/
 ├── docs/                    # this folder — planning + architecture + research notes
-├── src/bpverify/
+├── src/
 │   ├── tree/                # Phase 2: graph construction (3 strategies) + NLI labelling
 │   ├── llm/                 # Phase 1: LLM client protocol + implementations + prompts
 │   ├── inference/

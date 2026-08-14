@@ -16,7 +16,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done and verified
 
 - [ ] `uv sync` confirmed working after setting up the project scaffold yourself (Part A of the
       phase doc).
-- [ ] `bpverify.inference.hmt` implemented: exact upward-downward belief propagation on a tree.
+- [ ] `src.inference.hmt` implemented: exact upward-downward belief propagation on a tree.
 - [ ] Your own `tests/test_hmt.py` passes all three hand-computed checkpoints in the phase doc.
 
 **DoD:** you can explain, from memory, why a tree structure specifically makes this inference

@@ -97,7 +97,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from sklearn.linear_model import Ridge
 
-from bpverify.surrogate.embedder import Embedder, HashingEmbedder
+from src.surrogate.embedder import Embedder, HashingEmbedder
 
 
 @dataclass
@@ -201,7 +201,7 @@ data.
 ## Suggested File Structure
 
 ```
-src/bpverify/surrogate/
+src/surrogate/
 ├── __init__.py
 ├── embedder.py
 └── model.py

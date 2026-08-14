@@ -82,7 +82,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bpverify.inference.hmt import EmissionModel
+from src.inference.hmt import EmissionModel
 
 
 @dataclass(frozen=True)
@@ -220,7 +220,7 @@ case: no message-passing round can run at all, so convergence was never actually
 ## Suggested File Structure
 
 ```
-src/bpverify/inference/
+src/inference/
 └── loopy.py
 tests/
 └── test_loopy.py    # including the brute-force oracle

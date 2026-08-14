@@ -31,11 +31,11 @@ uv run ruff check .   # lint
 
 ## Testing Strategy
 
-- **Unit tests, no network:** `bpverify.inference` (the actual belief-propagation math) is tested
+- **Unit tests, no network:** `src.inference` (the actual belief-propagation math) is tested
   against small, hand-computed examples with a known correct posterior — see `tests/test_hmt.py`.
   This layer must NEVER require an LLM API key to test, by design (see the module-boundary rule in
   `01-architecture.md`).
-- **Integration tests, mocked LLM:** `bpverify.tree` and `bpverify.llm` are tested against a fake
+- **Integration tests, mocked LLM:** `src.tree` and `src.llm` are tested against a fake
   `LLMClient` that returns canned responses, so CI never spends API budget or depends on external
   uptime.
 - **Manual/notebook validation, real LLM:** actual end-to-end runs against a real API happen in
@@ -49,7 +49,7 @@ easy-to-miss technical requirement (this project's confidence-scoring method nee
 
 | Concern | Choice | Why |
 |---|---|---|
-| Interface | An `LLMClient` **protocol** (structural typing) in `bpverify/llm/base.py`, with `OpenAIClient` and `LocalHFClient` implementations | Swap backbones (matching the base paper's own GPT-3.5 / Llama-3-8B comparison) without touching any calling code. |
+| Interface | An `LLMClient` **protocol** (structural typing) in `src/llm/base.py`, with `OpenAIClient` and `LocalHFClient` implementations | Swap backbones (matching the base paper's own GPT-3.5 / Llama-3-8B comparison) without touching any calling code. |
 | Local/open backbone | Llama-3-8B-Instruct via Hugging Face `transformers` or vLLM | Free, fast iteration; matches one of the base paper's two tested backbones directly. |
 | API backbone | Any GPT-family model via its official SDK | Matches the base paper's other tested backbone; used sparingly for final numbers given cost. |
 | Caching | Every call cached to disk keyed by a hash of (prompt, model, params) | Re-running an experiment (or fixing a bug downstream) must never mean re-paying for or re-waiting on identical LLM calls. |

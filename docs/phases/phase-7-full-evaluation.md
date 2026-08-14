@@ -20,7 +20,7 @@ flowchart TB
 ## Step by Step
 
 1. **Tree vs. DAG comparison.** Run both the tree-only pipeline (Phase 2) and the DAG+loopy-BP
-   pipeline (Phase 3/5) on the same evaluation set. Report `bpverify.eval.metrics.evaluate()`
+   pipeline (Phase 3/5) on the same evaluation set. Report `src.eval.metrics.evaluate()`
    output for both, side by side. If the DAG version doesn't clearly beat the tree version, say so
    plainly — a null result honestly reported and explained is worth more than a cherry-picked win.
 2. **Surrogate accuracy-vs-cost curve.** Finish Phase 4's own Definition of Done here if it wasn't

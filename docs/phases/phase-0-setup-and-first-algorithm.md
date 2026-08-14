@@ -38,7 +38,7 @@ not gospel):
 
 ```toml
 [project]
-name = "bpverify"
+name = "reason-graph"
 version = "0.1.0"
 description = "Belief propagation for verifying multi-step LLM reasoning chains (22AIE301 course project)"
 readme = "README.md"
@@ -70,7 +70,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bpverify"]
+packages = ["src"]
 
 [tool.ruff]
 line-length = 100
@@ -97,7 +97,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=bpverify --cov-report=term-missing"
+addopts = "-v --cov=src --cov-report=term-missing"
 
 [dependency-groups]
 dev = [
@@ -217,7 +217,7 @@ bp-verify/
 ├── .gitignore
 ├── .pre-commit-config.yaml
 ├── .github/workflows/ci.yml
-├── src/bpverify/
+├── src/
 │   ├── __init__.py
 │   └── inference/
 │       ├── __init__.py
@@ -275,7 +275,7 @@ picture until Phase 1.
 
 ### The Contract You're Building Against
 
-Create `src/bpverify/inference/hmt.py`. This module must end up with **zero dependency on the LLM,
+Create `src/inference/hmt.py`. This module must end up with **zero dependency on the LLM,
 networking, or I/O** — it operates purely on plain data (a tree of node scores + two pluggable
 probability models). That's what lets you unit-test it against hand-computed examples with no API
 key and no mocking. Build these pieces, in this order:
@@ -472,7 +472,7 @@ remaining configs, each `1/3`), summing to `1.0`.
 ### Production Practices Applied Here
 
 - **Zero LLM/network/IO dependency, by design** — keep it that way; don't import anything from
-  `bpverify.llm` or `bpverify.tree` into this file.
+  `src.llm` or `src.tree` into this file.
 - **Fail loudly on malformed input** — your `__post_init__` validation should raise a clear
   exception for a bad `root_id` or dangling child reference.
 - **Write the test file yourself**, in `tests/test_hmt.py`, using the checkpoints above. This is

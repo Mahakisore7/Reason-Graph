@@ -129,8 +129,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-from bpverify.llm.base import LLMClient
-from bpverify.llm.prompts import (
+from src.llm.base import LLMClient
+from src.llm.prompts import (
     correction_answer_prompt,
     correction_question_prompt,
     correction_statement_prompt,
@@ -198,9 +198,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bpverify.llm.base import LLMClient
-from bpverify.tree.relationships import Relationship, RelationshipLabeler
-from bpverify.tree.strategies import (
+from src.llm.base import LLMClient
+from src.tree.relationships import Relationship, RelationshipLabeler
+from src.tree.strategies import (
     correction_strategy,
     decomposition_strategy,
     premises_strategy,
@@ -298,7 +298,7 @@ def build_belief_tree(
 ## Suggested File Structure
 
 ```
-src/bpverify/tree/
+src/tree/
 ├── __init__.py
 ├── strategies.py
 ├── relationships.py

@@ -61,10 +61,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bpverify.inference.hmt import EmissionModel, HiddenMarkovTree, TreeNode, posterior_root_true
-from bpverify.llm.base import LLMClient
-from bpverify.tree.builder import RawBeliefTree, build_belief_tree
-from bpverify.tree.relationships import RelationshipLabeler
+from src.inference.hmt import EmissionModel, HiddenMarkovTree, TreeNode, posterior_root_true
+from src.llm.base import LLMClient
+from src.tree.builder import RawBeliefTree, build_belief_tree
+from src.tree.relationships import RelationshipLabeler
 
 
 @dataclass(frozen=True)
@@ -182,7 +182,7 @@ Phases 0–4 each passing their own current Definition of Done.
 ## Suggested File Structure
 
 ```
-src/bpverify/
+src/
 └── pipeline.py
 tests/
 └── test_pipeline.py   # including the cross-validation tests above

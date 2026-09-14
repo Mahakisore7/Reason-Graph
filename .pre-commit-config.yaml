@@ -14,6 +14,7 @@ repos:
           - pydantic>=2.7
           - openai>=3.13.0
           - tenacity>=9.1.4
+          - sentence-transformers>=6.0.1
         args: [--config-file=pyproject.toml]
         files: ^src/
 

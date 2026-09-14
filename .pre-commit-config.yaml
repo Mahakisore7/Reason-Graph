@@ -13,6 +13,7 @@ repos:
         additional_dependencies:
           - pydantic>=2.7
         args: [--config-file=pyproject.toml]
+        files: ^src/
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

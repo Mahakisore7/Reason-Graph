@@ -12,6 +12,8 @@ repos:
       - id: mypy
         additional_dependencies:
           - pydantic>=2.7
+          - openai>=3.13.0
+          - tenacity>=9.1.4
         args: [--config-file=pyproject.toml]
         files: ^src/
 

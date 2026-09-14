@@ -173,3 +173,11 @@ Thumbs.db
 node_modules/
 npm-debug.log
 yarn-error.log
+
+# Data & experiment outputs (never commit raw datasets or LLM response caches --
+# see docs/phases/git-workflow.md)
+/data/
+/llm_cache/
+/results/*.csv
+/results/*.json
+!/results/.gitkeep

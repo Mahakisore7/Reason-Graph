@@ -8,8 +8,12 @@ from __future__ import annotations
 
 def true_false_confidence_prompt(statement: str) -> str:
     """Elicits a single-word True/False answer, so reading next-token logprobs for
-    exactly those two words is meaningful."""
-    return f"True or False? {statement}"
+    exactly those two words is meaningful. The explicit instruction matters for chat models,
+    which otherwise often open with "The statement is..." and bury the answer."""
+    return (
+        "Is the following statement true or false? Answer with exactly one word: True or "
+        f"False.\n\nStatement: {statement}"
+    )
 
 
 def decomposition_prompt(statement: str) -> str:

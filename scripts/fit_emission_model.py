@@ -12,19 +12,19 @@ segments, each hand-labelled true/false. Only the "fit" half of the answers is u
 split_by_response); scripts/evaluate_felm.py tests on the other half. Note: the HuggingFace `datasets` library can't load this repo anymore
 (it ships a now-unsupported loading script), so we pull the raw all.jsonl file directly instead.
 
-Usage: uv run python scripts/fit_emission_model.py
+Usage: uv run python scripts/fit_emission_model.py [--backend groq|hf] [--model NAME]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import random
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
 
-from src.llm.cache import CachingLLMClient
-from src.llm.groq_client import GroqClient
+from scripts.backends import add_backend_args, make_backend
 
 # Same 5 bins (4 edges) as the official repo's configs/hmm.yaml, so our numbers stay
 # comparable to theirs even though we fit them ourselves.
@@ -104,6 +104,10 @@ def load_felm_science_split() -> tuple[list[tuple[str, bool]], list[tuple[str, b
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    add_backend_args(parser)
+    backend = make_backend(parser.parse_args())
+
     examples, _ = load_felm_science_split()
     num_false = sum(1 for _, is_true in examples if not is_true)
     print(
@@ -111,12 +115,8 @@ def main() -> None:
         "the fit half only; the test half is never seen here."
     )
 
-    # Groq, not OpenAI: free, but text-based self-reported confidence (see
-    # src/llm/groq_client.py) -- so this emission table is a provisional fit, not the paper's
-    # faithful reproduction. Re-fit with OpenAIClient once billing credit is available.
-    llm = CachingLLMClient(
-        inner=GroqClient(), cache_dir=Path("llm_cache"), model_tag="groq-emission-fit"
-    )
+    print(f"LLM: {backend.model} ({backend.confidence_method})")
+    llm = backend.cached("emission-fit")
 
     num_bins = len(BIN_EDGES) + 1
     counts_true = [0] * num_bins
@@ -144,8 +144,8 @@ def main() -> None:
 
     result = {
         "dataset": "FELM-Science",
-        "llm": "groq/" + llm.inner.model if isinstance(llm.inner, GroqClient) else "unknown",
-        "confidence_method": "text-based self-report (provisional, see src/llm/groq_client.py)",
+        "llm": backend.model,
+        "confidence_method": backend.confidence_method,
         "split": {"part": "fit", "fit_fraction": FIT_FRACTION, "seed": SPLIT_SEED},
         "num_examples": len(examples),
         "bins_sep": BIN_EDGES,
@@ -161,7 +161,7 @@ def main() -> None:
         },
     }
 
-    out_path = Path("results/emission_model_felm_science_groq.json")
+    out_path = Path(f"results/emission_model_felm_science_{backend.run_name}.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2))
     print(f"Wrote {out_path}")

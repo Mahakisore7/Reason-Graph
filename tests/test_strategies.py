@@ -30,6 +30,24 @@ def test_decomposition_strategy_splits_bundled_statement() -> None:
     assert decomposition_strategy(llm, statement) == ["The sky is blue.", "Grass is green."]
 
 
+def test_decomposition_strategy_ignores_intro_and_closing_lines() -> None:
+    statement = "The Eiffel Tower, built in 1889, is in Paris."
+    llm = FakeLLMClient(
+        completions={
+            decomposition_prompt(statement): (
+                "The statement can be considered as two separate facts:\n\n"
+                "1. The Eiffel Tower was constructed in 1889.\n"
+                "2. The Eiffel Tower is located in Paris.\n\n"
+                "These two statements together make up the original."
+            ),
+        }
+    )
+    assert decomposition_strategy(llm, statement) == [
+        "The Eiffel Tower was constructed in 1889.",
+        "The Eiffel Tower is located in Paris.",
+    ]
+
+
 def test_decomposition_strategy_atomic_statement_returns_unchanged() -> None:
     statement = "The sky is blue."
     llm = FakeLLMClient(completions={decomposition_prompt(statement): "NONE"})

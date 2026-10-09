@@ -117,3 +117,39 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
 
 **D20. Test on the whole test half (310 sentences), not a 60-sentence sample.**
 - *Why:* the 60-sentence sample had only 7 false examples — too few for a stable AUROC.
+
+## Moving to open-source models
+
+**D21. Free, open-source models only. No paid APIs.**
+- *Why:* no budget. This replaces D5: OpenAI is no longer the path to the final numbers.
+- *Bonus:* running an open model ourselves gives the real True/False token probabilities — the
+  paper's method — which Groq never could. So this is both free *and* more faithful.
+
+**D22. Final reproduction model: Llama-3-8B-Instruct, run on Kaggle's free GPUs.**
+- *Why this model:* it's one of the two models the paper itself evaluates, and it's open-source.
+- *Why Kaggle:* the model is 16 GB; the laptop GPU has 6 GB and would run out of memory. Kaggle
+  gives 2 × 16 GB T4 GPUs free (~30 h/week), and runs continue with the laptop closed.
+- *Which copy:* `NousResearch/Meta-Llama-3-8B-Instruct` — the same weights as Meta's official
+  copy (same 16.1 GB, same Llama 3 licence), but downloadable without waiting for Meta's manual
+  approval.
+- *How:* `src/llm/hf_client.py` loads the model with `transformers`, in float16 (T4s don't
+  support bfloat16), split across both GPUs.
+
+**D23. One Groq account only — no rotating several accounts' keys.**
+- *Considered:* using 6 Gmail accounts' keys to get 6× the daily limit.
+- *Rejected:* Groq's Services Agreement §6.3(d)(iii) forbids use "in a manner intended to avoid
+  incurring Fees", and §7 allows suspension without notice. Risk of losing access mid-project.
+- *Instead:* the Groq run continues within one account's limit (1,000 requests/day), resuming
+  from cache each day.
+
+**D24. Stricter True/False prompt.**
+- *Before:* `True or False? {statement}`. *Now:* "Is the following statement true or false?
+  Answer with exactly one word: True or False."
+- *Why:* we read the model's *first* word. Chat models otherwise open with "The statement is…",
+  hiding the answer. (Groq uses its own prompt, so Groq results are unaffected.)
+
+**D25. Decomposition keeps numbered lines only.**
+- *Found by:* testing with a small open model, which wrote an intro sentence before its list
+  and a remark after it — both would have become fake claims in the tree.
+- *Checked:* none of Groq's 138 decomposition answers had extra lines, so earlier Groq results
+  are unaffected.

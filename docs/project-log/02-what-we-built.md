@@ -36,6 +36,7 @@ answer was **worked out by hand first**, then compared to the code to many decim
 | Prompts | `src/llm/prompts.py` | All question wording in one place |
 | OpenAI client | `src/llm/openai_client.py` | The paper's method: reads the model's internal probability for "True" vs "False". **Works, but account has no credit yet** |
 | Groq client | `src/llm/groq_client.py` | Free. Groq doesn't expose internal probabilities, so the model types out a number 0–1 instead — a weaker method |
+| Open-source model client | `src/llm/hf_client.py` | Runs an open model ourselves (Llama-3-8B on Kaggle) and reads the real True/False probabilities — the paper's method, free. *(added during Phase 2)* |
 
 **How we know it's right:** cache tests (4); both real clients tested live. OpenAI correctly
 reported "no credit" after retrying; Groq returned sensible scores.
@@ -53,6 +54,8 @@ reported "no credit" after retrying; Groq returned sensible scores.
 | NLI labeller | `src/tree/nli_labeler.py` | A dedicated sentence-relationship model (same one the official code uses), run in both directions |
 | Calibration fitting | `scripts/fit_emission_model.py` | Learns "how often is a claim with confidence X actually true?" from labelled data |
 | Evaluation | `scripts/evaluate_felm.py` | Builds a tree per test sentence, runs the Phase 0 math, measures accuracy (AUROC) |
+| Backend choice | `scripts/backends.py` | `--backend groq` or `--backend hf --model ...`; separate cache and result files per model |
+| Kaggle notebook | `notebooks/kaggle_felm_llama3.ipynb` | Runs both scripts on Kaggle's free GPUs with Llama-3-8B |
 
 **How we know it's right:**
 - 9 tests for strategies + builder, all using the fake LLM: decomposed children get the
@@ -60,12 +63,15 @@ reported "no credit" after retrying; Groq returned sensible scores.
   at 1.0 and are never re-scored, the tree stops at exactly the max depth.
 - 6 tests for how the two NLI directions combine into one link type.
 - 3 tests for the fit/test data split.
+- 3 tests for the True/False probability arithmetic. The open-model client was also run for
+  real with a small model (Qwen2.5-0.5B): true statements scored 0.95 / 0.82, false ones
+  0.24 / 0.03, and the whole fit → evaluate flow completed.
 - NLI model checked live: "in Paris" → "in France" correctly labelled one-way (entailment),
   a paraphrase labelled equivalence, Berlin vs. Paris labelled contradiction.
 - The tree → math conversion was checked on a hand-built tree: a strongly supporting,
   confident child pushes an uncertain parent upward, as it should.
 
-**31 tests total, all passing.** Every commit also passes automatic checks: `ruff` (style),
+**35 tests total, all passing.** Every commit also passes automatic checks: `ruff` (style),
 `mypy --strict` (types), `pytest`.
 
 ## Not built yet

@@ -14,6 +14,7 @@ so it can be read before a mentor review or used to explain the project to someo
 | [04-dataset-felm-science.md](04-dataset-felm-science.md) | Where the data comes from, what's inside it, how we cleaned and split it |
 | [05-results.md](05-results.md) | Numbers so far, what they do and don't show, known weaknesses |
 | [06-glossary.md](06-glossary.md) | Short definitions of every technical term used here |
+| [07-running-on-kaggle.md](07-running-on-kaggle.md) | Step-by-step: running the Llama-3-8B reproduction on Kaggle's free GPUs |
 
 ## Status at a glance
 
@@ -21,13 +22,14 @@ so it can be read before a mentor review or used to explain the project to someo
 |---|---|---|
 | 0 | Belief-propagation math engine (Hidden Markov Tree) | Done, merged (PR #1) |
 | 1 | Connection to LLMs (fake, cache, OpenAI, Groq) | Done, merged (PR #3) |
-| 2 | Belief-tree construction + first real evaluation on FELM-Science | Code done; faithful reproduction number still pending (needs OpenAI credit) |
+| 2 | Belief-tree construction + first real evaluation on FELM-Science | Code done; faithful reproduction (Llama-3-8B on Kaggle) ready to run |
 | 3+ | Our novelty: DAG + loopy belief propagation, surrogate scorer | Not started |
 
 ## Open items
 
-- **Faithful reproduction number.** Current numbers use Groq, which can only give a typed-out
-  confidence, not the paper's method. Re-run with OpenAI once billing credit is added.
+- **Faithful reproduction number.** Run `notebooks/kaggle_felm_llama3.ipynb` on Kaggle
+  (steps in [07-running-on-kaggle.md](07-running-on-kaggle.md)). Groq numbers stay provisional.
+- **Groq held-out run** continues within the free daily limit, resuming from cache.
 - **Transition parameters are hand-set guesses** (see [03-decisions.md](03-decisions.md)), not
   learned from data.
 - **Tree depth is 1** to keep API calls affordable; the paper's trees go deeper.

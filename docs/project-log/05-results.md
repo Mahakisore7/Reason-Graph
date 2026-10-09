@@ -59,7 +59,7 @@ hand-set transition numbers (D12) may be too strong or too weak.
 
 ## 4. Known weaknesses of these numbers
 
-1. **Typed-out confidence, not logprobs.** Needs OpenAI credit to fix.
+1. **Typed-out confidence, not logprobs.** Fixed by the Llama-3-8B run on Kaggle (D22).
 2. **Transition numbers are guesses** (D12), not learned.
 3. **Shallow trees** — depth 1, one correction sample (D16).
 4. **NLI quirk** — unrelated pairs sometimes labelled "contradiction" (D10), which can add
@@ -68,5 +68,6 @@ hand-set transition numbers (D12) may be too strong or too weak.
 
 ## Comparison with the paper
 
-Not done yet. A fair comparison needs the same confidence method (OpenAI logprobs) and
-similar tree depth. Until then, compare only **raw vs. tree within our own runs**.
+Not done yet. A fair comparison needs the paper's confidence method (token probabilities —
+coming from the Llama-3-8B Kaggle run) and similar tree depth. Until then, compare only
+**raw vs. tree within our own runs**.

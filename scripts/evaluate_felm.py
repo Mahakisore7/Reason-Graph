@@ -8,23 +8,25 @@ HiddenMarkovTree conversion below (AssembledTransition) is a minimal, direct ver
 get a number out. A cleaner, reusable version of this conversion belongs in Phase 5
 ("full assembly"), once the surrogate scorer and DAG extension exist too.
 
-Uses Groq (free, text-based self-reported confidence -- see src/llm/groq_client.py), so this
-AUROC is a provisional number, not the paper's faithful reproduction. Re-run with OpenAIClient
-once billing credit is available, for the number that actually goes in the report.
+Backends (see scripts/backends.py): --backend groq gives a provisional number (typed-out
+confidence); --backend hf runs an open-source model ourselves and reads real token
+probabilities -- the paper's method, and the number that goes in the report.
 
-Usage: uv run python scripts/evaluate_felm.py
+Usage: uv run python scripts/evaluate_felm.py [--backend groq|hf] [--model NAME]
+Run scripts/fit_emission_model.py with the same backend first.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sklearn.metrics import roc_auc_score
 
-from scripts.fit_emission_model import bin_index, load_felm_science
+from scripts.backends import add_backend_args, make_backend
+from scripts.fit_emission_model import bin_index, load_felm_science_split
 from src.inference.hmt import (
     DecompositionTransition,
     HiddenMarkovTree,
@@ -32,23 +34,18 @@ from src.inference.hmt import (
     TreeNode,
     posterior_root_true,
 )
-from src.llm.cache import CachingLLMClient
-from src.llm.groq_client import GroqClient
 from src.tree.builder import RawBeliefTree, build_belief_tree
 from src.tree.nli_labeler import CrossEncoderDirectionalNLI, NLIRelationshipLabeler
 from src.tree.relationships import DEFAULT_TRANSITION_PARAMS, Relationship
 
-# Kept small deliberately: each example costs several real LLM calls on Groq's free tier.
-# Scale up once this looks sane, or once OpenAI credit makes the "real" run affordable.
-SAMPLE_SIZE = 60
 # One level of children only -- at depth 2, correction alone (question + N*(answer+rewrite))
 # multiplied across every depth-1 child would run into the thousands of calls per statement.
 MAX_DEPTH = 1
 CORRECTION_SAMPLES = 1
 
 
-def load_emission_model() -> LookupEmission:
-    path = Path("results/emission_model_felm_science_groq.json")
+def load_emission_model(run_name: str) -> LookupEmission:
+    path = Path(f"results/emission_model_felm_science_{run_name}.json")
     data = json.loads(path.read_text())
     table: dict[float, dict[bool, float]] = {}
     for bin_str, probs in data["lookup_table"].items():
@@ -111,20 +108,31 @@ def raw_tree_to_hmt(raw: RawBeliefTree, emission: LookupEmission) -> HiddenMarko
 
 
 def main() -> None:
-    emission = load_emission_model()
-    examples = load_felm_science()
-    random.Random(42).shuffle(examples)
-    sample = examples[:SAMPLE_SIZE]
-    print(f"Evaluating on {len(sample)} of {len(examples)} FELM-Science sentences.")
-
-    llm = CachingLLMClient(
-        inner=GroqClient(), cache_dir=Path("llm_cache"), model_tag="groq-felm-eval"
+    parser = argparse.ArgumentParser()
+    add_backend_args(parser)
+    parser.add_argument(
+        "--limit", type=int, default=None, help="only the first N test segments (smoke test)"
     )
+    args = parser.parse_args()
+    backend = make_backend(args)
+    print(f"LLM: {backend.model} ({backend.confidence_method})")
+
+    emission = load_emission_model(backend.run_name)
+    # Test half only -- the emission table was fit on the other half (see
+    # scripts/fit_emission_model.py, split_by_response), so nothing here was seen during fitting.
+    _, sample = load_felm_science_split()
+    if args.limit is not None:
+        sample = sample[: args.limit]
+    num_false = sum(1 for _, is_true in sample if not is_true)
+    print(f"Evaluating on the {len(sample)}-segment test half ({num_false} false).")
+
+    llm = backend.cached("felm-eval")
     labeler = NLIRelationshipLabeler(directional=CrossEncoderDirectionalNLI())
 
     y_true: list[bool] = []
     tree_scores: list[float] = []
     raw_scores: list[float] = []
+    predictions: list[dict[str, object]] = []
     skipped = 0
 
     for i, (statement, is_true) in enumerate(sample):
@@ -143,6 +151,15 @@ def main() -> None:
         y_true.append(is_true)
         tree_scores.append(posterior)
         raw_scores.append(root_confidence)
+        predictions.append(
+            {
+                "statement": statement,
+                "label": is_true,
+                "raw_confidence": root_confidence,
+                "tree_posterior": posterior,
+                "tree_size": len(raw_tree.nodes),
+            }
+        )
         print(
             f"  {i + 1}/{len(sample)}: label={is_true} "
             f"raw={root_confidence:.2f} tree_posterior={posterior:.3f}"
@@ -151,24 +168,36 @@ def main() -> None:
     if skipped:
         print(f"Skipped {skipped} degenerate tree(s).")
 
-    raw_auroc = roc_auc_score(y_true, raw_scores)
-    tree_auroc = roc_auc_score(y_true, tree_scores)
-    print(f"Raw single-shot confidence AUROC: {raw_auroc:.4f}")
-    print(f"Belief-tree posterior AUROC:      {tree_auroc:.4f}")
+    raw_auroc: float | None = None
+    tree_auroc: float | None = None
+    if len(set(y_true)) < 2:
+        # AUROC compares true vs. false examples -- undefined if only one kind was scored
+        # (happens on small --limit smoke tests).
+        print("AUROC not computed: need both true and false segments in the sample.")
+    else:
+        raw_auroc = float(roc_auc_score(y_true, raw_scores))
+        tree_auroc = float(roc_auc_score(y_true, tree_scores))
+        print(f"Raw single-shot confidence AUROC: {raw_auroc:.4f}")
+        print(f"Belief-tree posterior AUROC:      {tree_auroc:.4f}")
 
-    Path("results/felm_science_auroc_groq.json").write_text(
+    out_path = Path(f"results/felm_science_auroc_{backend.run_name}.json")
+    out_path.write_text(
         json.dumps(
             {
+                "llm": backend.model,
+                "confidence_method": backend.confidence_method,
                 "sample_size": len(y_true),
                 "skipped": skipped,
                 "max_depth": MAX_DEPTH,
                 "raw_confidence_auroc": raw_auroc,
                 "belief_tree_auroc": tree_auroc,
+                # Per-statement scores, for plots and error analysis later.
+                "predictions": predictions,
             },
             indent=2,
         )
     )
-    print("Wrote results/felm_science_auroc_groq.json")
+    print(f"Wrote {out_path}")
 
 
 if __name__ == "__main__":

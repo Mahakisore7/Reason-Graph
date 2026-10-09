@@ -42,13 +42,13 @@ def decomposition_strategy(llm: LLMClient, statement: str) -> list[str]:
     if response.strip().upper() == "NONE":
         return [statement]
 
+    # Numbered lines only: chat models often wrap the list in an intro ("The statement can be
+    # split into two facts:") or a closing remark, which must not become claims.
     sub_facts: list[str] = []
     for raw_line in response.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        match = _NUMBERED_LINE.match(line)
-        sub_facts.append(match.group(1).strip() if match else line)
+        match = _NUMBERED_LINE.match(raw_line.strip())
+        if match:
+            sub_facts.append(match.group(1).strip())
 
     if len(sub_facts) < 2:
         # Only one usable line came back -- treat as "didn't really decompose".

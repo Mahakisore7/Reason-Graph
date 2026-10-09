@@ -18,13 +18,12 @@ Usage: uv run python scripts/evaluate_felm.py
 from __future__ import annotations
 
 import json
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sklearn.metrics import roc_auc_score
 
-from scripts.fit_emission_model import bin_index, load_felm_science
+from scripts.fit_emission_model import bin_index, load_felm_science_split
 from src.inference.hmt import (
     DecompositionTransition,
     HiddenMarkovTree,
@@ -38,9 +37,6 @@ from src.tree.builder import RawBeliefTree, build_belief_tree
 from src.tree.nli_labeler import CrossEncoderDirectionalNLI, NLIRelationshipLabeler
 from src.tree.relationships import DEFAULT_TRANSITION_PARAMS, Relationship
 
-# Kept small deliberately: each example costs several real LLM calls on Groq's free tier.
-# Scale up once this looks sane, or once OpenAI credit makes the "real" run affordable.
-SAMPLE_SIZE = 60
 # One level of children only -- at depth 2, correction alone (question + N*(answer+rewrite))
 # multiplied across every depth-1 child would run into the thousands of calls per statement.
 MAX_DEPTH = 1
@@ -112,10 +108,11 @@ def raw_tree_to_hmt(raw: RawBeliefTree, emission: LookupEmission) -> HiddenMarko
 
 def main() -> None:
     emission = load_emission_model()
-    examples = load_felm_science()
-    random.Random(42).shuffle(examples)
-    sample = examples[:SAMPLE_SIZE]
-    print(f"Evaluating on {len(sample)} of {len(examples)} FELM-Science sentences.")
+    # Test half only -- the emission table was fit on the other half (see
+    # scripts/fit_emission_model.py, split_by_response), so nothing here was seen during fitting.
+    _, sample = load_felm_science_split()
+    num_false = sum(1 for _, is_true in sample if not is_true)
+    print(f"Evaluating on the {len(sample)}-segment test half ({num_false} false).")
 
     llm = CachingLLMClient(
         inner=GroqClient(), cache_dir=Path("llm_cache"), model_tag="groq-felm-eval"

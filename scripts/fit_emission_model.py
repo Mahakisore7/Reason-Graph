@@ -7,8 +7,9 @@ This is a *calibration* question about the LLM's confidence scores on their own 
 confidence mean ~90% likely true?) -- it has nothing to do with belief-tree structure or the
 transition parameters in src/tree/relationships.py, which are a separate concept.
 
-Dataset: FELM-Science (hkust-nlp/felm, "science" domain) -- 125 real sentences, each already
-hand-labelled true/false. Note: the HuggingFace `datasets` library can't load this repo anymore
+Dataset: FELM-Science (hkust-nlp/felm, "science" domain) -- 125 ChatGPT answers, split into 684
+segments, each hand-labelled true/false. Only the "fit" half of the answers is used here (see
+split_by_response); scripts/evaluate_felm.py tests on the other half. Note: the HuggingFace `datasets` library can't load this repo anymore
 (it ships a now-unsupported loading script), so we pull the raw all.jsonl file directly instead.
 
 Usage: uv run python scripts/fit_emission_model.py
@@ -17,6 +18,7 @@ Usage: uv run python scripts/fit_emission_model.py
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
@@ -36,24 +38,78 @@ def bin_index(score: float) -> int:
     return len(BIN_EDGES)
 
 
-def load_felm_science() -> list[tuple[str, bool]]:
+Response = list[tuple[str, bool]]  # one AI answer = its labelled segments, in order
+
+FIT_FRACTION = 0.5
+SPLIT_SEED = 42
+# FELM's segmenter sometimes emits non-claims as their own segment -- bare list numbers
+# ("2."), filler ("Sure!", "Regenerate response"), single list items ("Mud."). On inspection
+# all 64 segments under 4 words are like this, all labelled true; real claims start at ~5
+# words ("This is known as unihemispheric sleep.").
+MIN_WORDS = 4
+
+
+def load_felm_science_responses() -> list[Response]:
     path = hf_hub_download(repo_id="hkust-nlp/felm", filename="all.jsonl", repo_type="dataset")
-    examples: list[tuple[str, bool]] = []
+    responses: list[Response] = []
+    seen: set[str] = set()
     with open(path, encoding="utf-8") as f:
         for line in f:
             record = json.loads(line)
             if record.get("domain") != "science":
                 continue
+            # Two science answers appear twice, word for word with identical labels -- keep
+            # one copy, or the duplicate can land in the opposite fit/test half.
+            if record["response"].strip() in seen:
+                continue
+            seen.add(record["response"].strip())
             sentences = record["segmented_response"]
             labels = record["labels"]
-            for sentence, label in zip(sentences, labels, strict=True):
-                examples.append((sentence, bool(label)))
-    return examples
+            segments = [
+                (s, bool(label))
+                for s, label in zip(sentences, labels, strict=True)
+                if len(s.split()) >= MIN_WORDS
+            ]
+            if segments:
+                responses.append(segments)
+    return responses
+
+
+def split_by_response(
+    responses: list[Response], fit_fraction: float, seed: int
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """Splits whole answers (not individual segments) into a fit set and a test set.
+
+    Segments from the same answer share topic and wording, so splitting segment-by-segment
+    would still let the test set "see" its own answers during fitting. Answers with and
+    without any false segment are split separately, so both halves get a fair share of
+    false examples instead of whatever one shuffle happens to give.
+    """
+    rng = random.Random(seed)
+    fit: list[tuple[str, bool]] = []
+    test: list[tuple[str, bool]] = []
+    has_error = [r for r in responses if not all(label for _, label in r)]
+    error_free = [r for r in responses if all(label for _, label in r)]
+    for group in (has_error, error_free):
+        shuffled = group[:]
+        rng.shuffle(shuffled)
+        num_fit = round(len(shuffled) * fit_fraction)
+        fit += [seg for r in shuffled[:num_fit] for seg in r]
+        test += [seg for r in shuffled[num_fit:] for seg in r]
+    return fit, test
+
+
+def load_felm_science_split() -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    return split_by_response(load_felm_science_responses(), FIT_FRACTION, SPLIT_SEED)
 
 
 def main() -> None:
-    examples = load_felm_science()
-    print(f"Loaded {len(examples)} labelled sentences from FELM-Science.")
+    examples, _ = load_felm_science_split()
+    num_false = sum(1 for _, is_true in examples if not is_true)
+    print(
+        f"Fitting on {len(examples)} FELM-Science segments ({num_false} false) -- "
+        "the fit half only; the test half is never seen here."
+    )
 
     # Groq, not OpenAI: free, but text-based self-reported confidence (see
     # src/llm/groq_client.py) -- so this emission table is a provisional fit, not the paper's
@@ -90,6 +146,7 @@ def main() -> None:
         "dataset": "FELM-Science",
         "llm": "groq/" + llm.inner.model if isinstance(llm.inner, GroqClient) else "unknown",
         "confidence_method": "text-based self-report (provisional, see src/llm/groq_client.py)",
+        "split": {"part": "fit", "fit_fraction": FIT_FRACTION, "seed": SPLIT_SEED},
         "num_examples": len(examples),
         "bins_sep": BIN_EDGES,
         "counts_true": counts_true,

@@ -22,6 +22,7 @@ import json
 import math
 import random
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
@@ -43,6 +44,17 @@ def bin_index(score: float) -> int:
 
 
 Response = list[tuple[str, bool]]  # one AI answer = its labelled segments, in order
+
+
+@dataclass(frozen=True)
+class FelmAnswer:
+    """One ChatGPT answer: the question, the full answer text, and its labelled segments.
+    The question and full text are the context used to make each segment stand alone."""
+
+    question: str
+    response: str
+    segments: Response
+
 
 FIT_FRACTION = 0.5
 SPLIT_SEED = 42
@@ -81,9 +93,9 @@ def fit_logistic(confidences: list[float], labels: list[bool]) -> LogisticEmissi
     )
 
 
-def load_felm_science_responses() -> list[Response]:
+def load_felm_science_answers() -> list[FelmAnswer]:
     path = hf_hub_download(repo_id="hkust-nlp/felm", filename="all.jsonl", repo_type="dataset")
-    responses: list[Response] = []
+    answers: list[FelmAnswer] = []
     seen: set[str] = set()
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -101,8 +113,12 @@ def load_felm_science_responses() -> list[Response]:
                 (s, bool(label)) for s, label in zip(sentences, labels, strict=True) if is_claim(s)
             ]
             if segments:
-                responses.append(segments)
-    return responses
+                answers.append(FelmAnswer(record["prompt"], record["response"], segments))
+    return answers
+
+
+def load_felm_science_responses() -> list[Response]:
+    return [a.segments for a in load_felm_science_answers()]
 
 
 def split_by_response(
@@ -129,16 +145,55 @@ def split_by_response(
     return fit, test
 
 
-def load_felm_science_split() -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
-    return split_by_response(load_felm_science_responses(), FIT_FRACTION, SPLIT_SEED)
+def standalone_path(run_name: str) -> Path:
+    return Path(f"results/felm_science_standalone_{run_name}.json")
+
+
+def load_felm_science_split(
+    standalone: dict[str, str] | None = None,
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """Fit and test halves. With `standalone` (original segment -> rewritten stand-alone
+    version, from scripts/decontextualize_felm.py), each segment is replaced by its rewrite;
+    the label always stays the original segment's human label."""
+    fit, test = split_by_response(load_felm_science_responses(), FIT_FRACTION, SPLIT_SEED)
+    if standalone is None:
+        return fit, test
+    return (
+        [(standalone.get(s, s), label) for s, label in fit],
+        [(standalone.get(s, s), label) for s, label in test],
+    )
+
+
+def result_name(args: argparse.Namespace, run_name: str) -> str:
+    """Result-file name: one per model, plus a separate one for the stand-alone rewrites."""
+    return run_name + ("-standalone" if args.standalone else "")
+
+
+def add_standalone_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help="use the stand-alone rewrites from scripts/decontextualize_felm.py",
+    )
+
+
+def load_standalone(args: argparse.Namespace, run_name: str) -> dict[str, str] | None:
+    if not args.standalone:
+        return None
+    data: dict[str, str] = json.loads(standalone_path(run_name).read_text(encoding="utf-8"))[
+        "rewrites"
+    ]
+    return data
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     add_backend_args(parser)
-    backend = make_backend(parser.parse_args())
+    add_standalone_arg(parser)
+    args = parser.parse_args()
+    backend = make_backend(args)
 
-    examples, _ = load_felm_science_split()
+    examples, _ = load_felm_science_split(load_standalone(args, backend.run_name))
     num_false = sum(1 for _, is_true in examples if not is_true)
     print(
         f"Fitting on {len(examples)} FELM-Science segments ({num_false} false) -- "
@@ -181,6 +236,7 @@ def main() -> None:
         "llm": backend.model,
         "confidence_method": backend.confidence_method,
         "split": {"part": "fit", "fit_fraction": FIT_FRACTION, "seed": SPLIT_SEED},
+        "standalone_rewrites": bool(args.standalone),
         "num_examples": len(examples),
         "bins_sep": BIN_EDGES,
         "counts_true": counts_true,
@@ -201,7 +257,9 @@ def main() -> None:
         },
     }
 
-    out_path = Path(f"results/emission_model_felm_science_{backend.run_name}.json")
+    out_path = Path(
+        f"results/emission_model_felm_science_{result_name(args, backend.run_name)}.json"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2))
     print(f"Wrote {out_path}")

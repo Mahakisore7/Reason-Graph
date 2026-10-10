@@ -19,10 +19,20 @@ from src.llm.cache import CachingLLMClient
 from src.llm.groq_client import GroqClient
 from src.llm.hf_client import DEFAULT_MODEL, HuggingFaceClient
 
+# Part of every cache tag. Cached confidences are keyed by statement text, not by prompt, so a
+# prompt change must change this -- otherwise old scores are silently reused under the new
+# method. Earlier runs (our own prompts) used no suffix; "btprop" = the official prompts (D29).
+PIPELINE_VERSION = "btprop"
+
 
 class _CacheOnlyClient:
     def complete(self, prompt: str, *, max_tokens: int = 512, temperature: float = 0.0) -> str:
         raise RuntimeError(f"--offline: no saved answer for prompt {prompt[:80]!r}")
+
+    def complete_samples(
+        self, prompt: str, n: int, *, max_tokens: int = 512, temperature: float = 0.7
+    ) -> list[str]:
+        raise RuntimeError(f"--offline: no saved samples for prompt {prompt[:80]!r}")
 
     def true_false_confidence(self, statement: str) -> float:
         raise RuntimeError(f"--offline: no saved confidence for {statement[:80]!r}")
@@ -37,7 +47,9 @@ class Backend:
 
     def cached(self, stage: str) -> CachingLLMClient:
         return CachingLLMClient(
-            inner=self.inner, cache_dir=Path("llm_cache"), model_tag=f"{self.run_name}-{stage}"
+            inner=self.inner,
+            cache_dir=Path("llm_cache"),
+            model_tag=f"{self.run_name}-{stage}-{PIPELINE_VERSION}",
         )
 
 
@@ -61,7 +73,6 @@ def make_backend(args: argparse.Namespace) -> Backend:
 def _make_backend(args: argparse.Namespace) -> Backend:
     if args.backend == "groq":
         groq = GroqClient()
-        # run_name stays plain "groq" so existing cached Groq answers keep being reused.
         return Backend("groq", groq.model, "typed-out self-report (provisional)", groq)
     model = args.model or DEFAULT_MODEL
     return Backend(

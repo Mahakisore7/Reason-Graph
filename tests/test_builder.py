@@ -1,122 +1,103 @@
-"""Tests for build_belief_tree -- all against FakeLLMClient + FakeRelationshipLabeler, zero
-network access needed."""
+"""Tests for build_belief_tree (official BTProp flow) -- FakeLLMClient + FakeRelationshipLabeler."""
 
 from __future__ import annotations
 
 from src.llm.fake import FakeLLMClient
 from src.llm.prompts import (
-    correction_answer_prompt,
-    correction_question_prompt,
-    correction_statement_prompt,
     decomposition_prompt,
-    premises_prompt,
+    perturb_fillin_prompt,
+    perturb_question_prompt,
+    select_strategy_prompt,
+    support_premises_prompt,
 )
 from src.tree.builder import build_belief_tree
 from src.tree.relationships import FakeRelationshipLabeler, Relationship
 
-ROOT = "The Eiffel Tower, built in 1889, is located in Paris."
+ROOT = "The Eiffel Tower, built in 1889, is in Berlin."
+ONE_CLAIM = f"Claim 1: {ROOT}"
 
 
-def test_decomposition_child_gets_equivalence_and_correct_strategy_label() -> None:
-    llm = FakeLLMClient(
+def _premise_llm(premises: list[str]) -> FakeLLMClient:
+    lines = "\n".join(f"Premise {i + 1}: {p}" for i, p in enumerate(premises))
+    return FakeLLMClient(
         completions={
-            decomposition_prompt(ROOT): (
-                "1. The Eiffel Tower was built in 1889.\n2. The Eiffel Tower is in Paris."
-            ),
+            decomposition_prompt(ROOT): ONE_CLAIM,
+            select_strategy_prompt(ROOT): "Output: Logical Relation",
         },
+        samples={support_premises_prompt(ROOT): [f"Judgement: True\n{lines}", "Judgement: False"]},
         confidences={ROOT: 0.9},
-        default_confidence=0.7,
     )
-    labeler = FakeRelationshipLabeler()
-
-    # max_depth=1: root is processed (splits into 2 children), but the children -- now at
-    # depth 1 -- are never processed themselves, so no further canned completions are needed.
-    tree = build_belief_tree(llm, labeler, ROOT, max_depth=1, correction_samples=1)
-
-    root = tree.nodes[tree.root_id]
-    assert len(root.children) == 2
-    for child_id in root.children:
-        child = tree.nodes[child_id]
-        assert child.strategy == "decomposition"
-        assert child.relationship_to_parent is Relationship.EQUIVALENCE
-        assert child.parent_id == tree.root_id
 
 
-def test_neutral_labelled_premise_is_dropped() -> None:
-    supported_text = "Gustave Eiffel's company designed the tower."
-    contradicted_text = "The tower was designed by a different engineer."
+def test_decomposition_children_are_nli_filtered() -> None:
+    claims = ["The Eiffel Tower was built in 1889.", "The Eiffel Tower is in Berlin.", "Cats purr."]
     llm = FakeLLMClient(
         completions={
-            decomposition_prompt(ROOT): "NONE",
-            premises_prompt(ROOT): f"SUPPORT: {supported_text}\nCONTRADICT: {contradicted_text}",
-            correction_question_prompt(ROOT): "q",
-            correction_answer_prompt("q"): "a",
-            correction_statement_prompt(ROOT, "q", "a"): "corrected",
-        },
-        confidences={ROOT: 0.9, supported_text: 0.8, contradicted_text: 0.2},
-        default_confidence=0.5,
+            decomposition_prompt(ROOT): "\n".join(
+                f"Claim {i + 1}: {c}" for i, c in enumerate(claims)
+            )
+        }
     )
     labeler = FakeRelationshipLabeler(
         labels={
-            (supported_text, ROOT): Relationship.ENTAILMENT,
-            (contradicted_text, ROOT): Relationship.NEUTRAL,
+            (claims[0], ROOT): Relationship.REVERSE_ENTAILMENT,
+            (claims[1], ROOT): Relationship.REVERSE_ENTAILMENT,
         }
     )
-
-    tree = build_belief_tree(llm, labeler, ROOT, max_depth=1, correction_samples=1)
-
-    root = tree.nodes[tree.root_id]
-    statements = {tree.nodes[cid].statement for cid in root.children}
-    assert supported_text in statements
-    assert contradicted_text not in statements
+    tree = build_belief_tree(llm, labeler, ROOT)
+    kids = [tree.nodes[c] for c in tree.nodes[tree.root_id].children]
+    assert [k.statement for k in kids] == claims[:2]  # "Cats purr." is unrelated -> dropped
+    assert all(k.strategy == "decomposition" for k in kids)
 
 
-def test_correction_child_confidence_is_fixed_not_reprobed() -> None:
+def test_nothing_checkable_means_no_children() -> None:
+    llm = FakeLLMClient(
+        completions={decomposition_prompt(ROOT): "Claim 1: No check-worthy claims available."}
+    )
+    tree = build_belief_tree(llm, FakeRelationshipLabeler(), ROOT)
+    assert tree.nodes[tree.root_id].children == []
+
+
+def test_premises_drop_unrelated_and_keep_at_most_three() -> None:
+    premises = ["P1.", "P2.", "Unrelated.", "P3.", "P4."]
+    related = {(p, ROOT): Relationship.REVERSE_ENTAILMENT for p in premises if p != "Unrelated."}
+    llm = _premise_llm(premises)
+    tree = build_belief_tree(llm, FakeRelationshipLabeler(labels=related), ROOT)
+    kids = [tree.nodes[c] for c in tree.nodes[tree.root_id].children]
+    assert [k.statement for k in kids] == ["P1.", "P2.", "P3."]
+    assert all(k.strategy == "premise" for k in kids)
+    assert llm.confidence_call_count == 1 + 3  # root + each kept premise
+
+
+def test_corrections_skip_copies_of_parent_and_have_fixed_confidence() -> None:
+    question = "Where is the Eiffel Tower?"
+    fixed = "The Eiffel Tower, built in 1889, is in Paris."
     llm = FakeLLMClient(
         completions={
-            decomposition_prompt(ROOT): "NONE",
-            premises_prompt(ROOT): "",
-            correction_question_prompt(ROOT): "q",
-            correction_answer_prompt("q"): "a",
-            correction_statement_prompt(ROOT, "q", "a"): "corrected statement",
+            decomposition_prompt(ROOT): ONE_CLAIM,
+            select_strategy_prompt(ROOT): "Output: Statement Perturbation",
+            perturb_question_prompt(ROOT): f"Question: {question}",
+            perturb_fillin_prompt("Paris", ROOT): f"Revised Answer: {fixed}",
+            perturb_fillin_prompt("Berlin", ROOT): f"Revised Answer: {ROOT}",
         },
+        samples={question: ["Paris", "Berlin"]},
         confidences={ROOT: 0.9},
-        default_confidence=0.5,
     )
-    labeler = FakeRelationshipLabeler()
-
-    tree = build_belief_tree(llm, labeler, ROOT, max_depth=1, correction_samples=1)
-
-    root = tree.nodes[tree.root_id]
-    correction_children = [
-        tree.nodes[cid] for cid in root.children if tree.nodes[cid].strategy == "correction"
-    ]
-    assert len(correction_children) == 1
-    assert correction_children[0].confidence == 1.0
-    assert correction_children[0].statement == "corrected statement"
-    # Confidence probed only for the root -- never for the fixed-confidence correction child.
-    assert llm.confidence_call_count == 1
+    labeler = FakeRelationshipLabeler(labels={(fixed, ROOT): Relationship.CONTRADICTION})
+    tree = build_belief_tree(llm, labeler, ROOT, max_depth=2)
+    kids = [tree.nodes[c] for c in tree.nodes[tree.root_id].children]
+    assert [k.statement for k in kids] == [fixed]  # the unchanged copy is skipped
+    assert kids[0].confidence == 1.0
+    assert kids[0].relationship_to_parent is Relationship.CONTRADICTION
+    assert kids[0].children == []  # corrections are leaves even below max_depth
+    assert llm.confidence_call_count == 1  # only the root was scored
 
 
-def test_tree_stops_growing_exactly_at_max_depth() -> None:
-    llm = FakeLLMClient(
-        completions={
-            decomposition_prompt(ROOT): "NONE",
-            premises_prompt(ROOT): "",
-            correction_question_prompt(ROOT): "q0",
-            correction_answer_prompt("q0"): "a0",
-            correction_statement_prompt(ROOT, "q0", "a0"): "level1 statement",
-        },
-        confidences={ROOT: 0.9},
-        default_confidence=0.5,
-    )
-    labeler = FakeRelationshipLabeler()
-
-    # If depth control were broken, this would try to expand "level1 statement" too and
-    # crash with KeyError (no canned completion for it) -- passing proves the stop is exact.
-    tree = build_belief_tree(llm, labeler, ROOT, max_depth=1, correction_samples=1)
-
-    root = tree.nodes[tree.root_id]
-    assert len(root.children) == 1
-    leaf = tree.nodes[root.children[0]]
-    assert leaf.children == []
+def test_tree_stops_at_max_depth() -> None:
+    llm = _premise_llm(["P1."])
+    labeler = FakeRelationshipLabeler(labels={("P1.", ROOT): Relationship.REVERSE_ENTAILMENT})
+    # If depth control were broken this would try to expand "P1." and hit a missing canned
+    # completion (KeyError).
+    tree = build_belief_tree(llm, labeler, ROOT, max_depth=1)
+    premise = tree.nodes[tree.nodes[tree.root_id].children[0]]
+    assert premise.children == []

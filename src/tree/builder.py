@@ -1,10 +1,14 @@
-"""Orchestrates the three strategies + relationship labelling + confidence scoring into one
-tree.
+"""Builds one belief tree from a statement, following the official BTProp pipeline
+(src/tree_gen.py, premise_generate_chatgpt; hmm_forward.py) -- D29:
 
-Design decision (see docs/phases/phase-2-tree-construction.md, "A Design Decision That's Yours
-to Make"): when decomposition doesn't split a statement, we run BOTH premises and correction --
-option (b) from the doc. This is simpler than a dedicated "which strategy" prompt and strictly
-more thorough (more LLM calls per node, but no extra strategy-selection logic to get wrong).
+1. Only the root may be decomposed. If the LLM extracts more than one claim, those claims are
+   the children (parent true only if all are true). If it finds nothing checkable, the root
+   gets no children.
+2. Otherwise the LLM picks premises, correction, or both (D8 replaced by the paper's choice).
+3. Every candidate child is NLI-labelled against its parent and dropped if unrelated. At most 3
+   premises and 5 corrections are kept; a correction identical to its parent is skipped.
+4. Decomposition and premise children get an LLM confidence and can be expanded further;
+   corrections are leaves with confidence fixed at 1.0 (they carry a separate emission model).
 """
 
 from __future__ import annotations
@@ -18,8 +22,13 @@ from src.tree.relationships import Relationship, RelationshipLabeler
 from src.tree.strategies import (
     correction_strategy,
     decomposition_strategy,
+    is_no_claims,
     premises_strategy,
+    select_strategies,
 )
+
+MAX_PREMISES = 3
+MAX_CORRECTIONS = 5
 
 
 @dataclass
@@ -35,9 +44,8 @@ class RawNode:
 
 @dataclass
 class RawBeliefTree:
-    """Intermediate representation -- statements, confidences, relationships, but not yet an
-    inference-ready HiddenMarkovTree/FactorGraph. That conversion needs a *fitted* emission model
-    (needs real labelled data) and belongs in Phase 5, not here."""
+    """Statements, confidences and relationships -- not yet an inference-ready
+    HiddenMarkovTree (that conversion needs a fitted emission model)."""
 
     nodes: dict[str, RawNode]
     root_id: str
@@ -48,10 +56,9 @@ def build_belief_tree(
     labeler: RelationshipLabeler,
     root_statement: str,
     *,
-    max_depth: int = 2,
-    correction_samples: int = 2,
+    max_depth: int = 1,
 ) -> RawBeliefTree:
-    """Builds the tree breadth-first from root_statement, stopping at max_depth."""
+    """Builds the tree breadth-first from root_statement, expanding nodes above max_depth."""
     next_id = (f"n{i}" for i in count())
 
     root_id = next(next_id)
@@ -69,61 +76,56 @@ def build_belief_tree(
     queue: deque[tuple[str, int]] = deque([(root_id, 0)])
     while queue:
         node_id, depth = queue.popleft()
-        if depth >= max_depth:
-            continue
         parent = nodes[node_id]
+        if depth >= max_depth or parent.strategy == "correction":
+            continue
 
-        def add_child(
-            statement: str,
-            *,
-            confidence: float,
-            relationship: Relationship | None,
+        def add_children(
+            statements: list[str],
             strategy: str,
-            parent_id: str = node_id,
+            limit: int,
+            *,
+            parent: RawNode = parent,
             depth: int = depth,
         ) -> None:
-            child_id = next(next_id)
-            nodes[child_id] = RawNode(
-                node_id=child_id,
-                statement=statement,
-                confidence=confidence,
-                parent_id=parent_id,
-                relationship_to_parent=relationship,
-                strategy=strategy,
-            )
-            nodes[parent_id].children.append(child_id)
-            queue.append((child_id, depth + 1))
-
-        sub_facts = decomposition_strategy(llm, parent.statement)
-        if len(sub_facts) > 1:
-            for fact in sub_facts:
-                add_child(
-                    fact,
-                    confidence=llm.true_false_confidence(fact),
-                    relationship=Relationship.EQUIVALENCE,
-                    strategy="decomposition",
+            added = 0
+            for statement in statements:
+                if added == limit:
+                    break
+                if strategy == "correction" and statement == parent.statement:
+                    continue
+                relationship = labeler.label(statement, parent.statement)
+                if relationship is Relationship.NEUTRAL:
+                    continue
+                child_id = next(next_id)
+                nodes[child_id] = RawNode(
+                    node_id=child_id,
+                    statement=statement,
+                    confidence=(
+                        1.0 if strategy == "correction" else llm.true_false_confidence(statement)
+                    ),
+                    parent_id=parent.node_id,
+                    relationship_to_parent=relationship,
+                    strategy=strategy,
                 )
-            continue  # decomposition took -- don't also run premises/correction on this node
+                parent.children.append(child_id)
+                queue.append((child_id, depth + 1))
+                added += 1
 
-        for premise in premises_strategy(llm, parent.statement):
-            relationship = labeler.label(premise.text, parent.statement)
-            if relationship is Relationship.NEUTRAL:
+        if parent.strategy == "root":
+            claims = decomposition_strategy(llm, parent.statement)
+            if is_no_claims(claims):
                 continue
-            add_child(
-                premise.text,
-                confidence=llm.true_false_confidence(premise.text),
-                relationship=relationship,
-                strategy="premise",
-            )
+            if len(claims) > 1:
+                add_children(claims, "decomposition", limit=len(claims))
+                continue
 
-        for corrected_statement in correction_strategy(
-            llm, parent.statement, num_samples=correction_samples
-        ):
-            add_child(
-                corrected_statement,
-                confidence=1.0,  # fixed, never re-probed -- see strategies.correction_strategy
-                relationship=None,  # not NLI-labelled: it's a rewritten alternative, not a claim
-                strategy="correction",
-            )
+        for strategy in select_strategies(llm, parent.statement):
+            if strategy == "premises":
+                add_children(premises_strategy(llm, parent.statement), "premise", MAX_PREMISES)
+            else:
+                add_children(
+                    correction_strategy(llm, parent.statement), "correction", MAX_CORRECTIONS
+                )
 
     return RawBeliefTree(nodes=nodes, root_id=root_id)

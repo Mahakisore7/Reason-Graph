@@ -19,6 +19,14 @@ class LLMClient(Protocol):
         Step 1."""
         ...
 
+    def complete_samples(
+        self, prompt: str, n: int, *, max_tokens: int = 512, temperature: float = 0.7
+    ) -> list[str]:
+        """n independent samples for the same prompt -- the paper samples 2 premise lists and
+        5 answers per key question. A separate method because calling `complete` n times
+        through the cache would replay the first sample n times."""
+        ...
+
     def true_false_confidence(self, statement: str) -> float:
         """Confidence in [0, 1] that `statement` is true. Matches BTProp's own scoring
         method: prompt "True or False? {statement}" and normalise the model's own

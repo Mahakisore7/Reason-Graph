@@ -6,6 +6,7 @@ docs/phases/04-research-notes-btprop.md for the full derivation.
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -91,6 +92,32 @@ class LookupEmission:
                 f"known scores are {sorted(self.table)}"
             )
         return self.table[score][truth]
+
+
+@dataclass(frozen=True)
+class LogisticEmission:
+    """A smooth emission model: P(true | score) = sigmoid(slope * logit(score) + intercept),
+    fit on labelled data (Platt scaling). With positive slope, a higher score can never count
+    as weaker evidence of truth -- unlike a binned table fit on few examples, which can flip.
+
+    HMT inference needs p(S | Z), not P(Z | S). Bayes gives p(S | Z) = P(Z | S) p(S) / P(Z);
+    p(S) is the same for Z=True and Z=False, so it cancels in the posterior, and dividing by
+    the base rate P(Z) of the data the curve was fit on is enough.
+    """
+
+    slope: float
+    intercept: float
+    base_rate_true: float
+    eps: float = 1e-6  # keeps logit finite for scores of exactly 0 or 1
+
+    def p_true_given_score(self, score: float) -> float:
+        s = min(max(score, self.eps), 1 - self.eps)
+        z = self.slope * math.log(s / (1 - s)) + self.intercept
+        return 1 / (1 + math.exp(-z))
+
+    def prob(self, score: float, truth: bool) -> float:
+        p = self.p_true_given_score(score)
+        return p / self.base_rate_true if truth else (1 - p) / (1 - self.base_rate_true)
 
 
 @dataclass(frozen=True)

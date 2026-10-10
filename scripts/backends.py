@@ -4,6 +4,8 @@
     --backend hf [--model NAME]    open-source model run ourselves, real token probabilities
 
 Each backend gets its own cache tag and result filenames, so runs never mix or overwrite.
+--offline replays saved answers only (e.g. re-scoring Kaggle's Llama run on a laptop with no
+GPU) and stops if an answer is missing, instead of trying to run the model.
 """
 
 from __future__ import annotations
@@ -16,6 +18,14 @@ from src.llm.base import LLMClient
 from src.llm.cache import CachingLLMClient
 from src.llm.groq_client import GroqClient
 from src.llm.hf_client import DEFAULT_MODEL, HuggingFaceClient
+
+
+class _CacheOnlyClient:
+    def complete(self, prompt: str, *, max_tokens: int = 512, temperature: float = 0.0) -> str:
+        raise RuntimeError(f"--offline: no saved answer for prompt {prompt[:80]!r}")
+
+    def true_false_confidence(self, statement: str) -> float:
+        raise RuntimeError(f"--offline: no saved confidence for {statement[:80]!r}")
 
 
 @dataclass(frozen=True)
@@ -34,9 +44,21 @@ class Backend:
 def add_backend_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--backend", choices=("groq", "hf"), default="groq")
     parser.add_argument("--model", default=None, help=f"hf backend only (default: {DEFAULT_MODEL})")
+    parser.add_argument(
+        "--offline", action="store_true", help="replay saved answers only; never call the model"
+    )
 
 
 def make_backend(args: argparse.Namespace) -> Backend:
+    backend = _make_backend(args)
+    if args.offline:
+        return Backend(
+            backend.run_name, backend.model, backend.confidence_method, _CacheOnlyClient()
+        )
+    return backend
+
+
+def _make_backend(args: argparse.Namespace) -> Backend:
     if args.backend == "groq":
         groq = GroqClient()
         # run_name stays plain "groq" so existing cached Groq answers keep being reused.

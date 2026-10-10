@@ -11,6 +11,7 @@ from src.inference.hmt import (
     DecompositionTransition,
     HiddenMarkovTree,
     IndependentChildTransition,
+    LogisticEmission,
     LookupEmission,
     TreeNode,
     posterior_root_true,
@@ -107,3 +108,23 @@ def test_malformed_tree_dangling_child_raises() -> None:
 def test_lookup_emission_unknown_score_raises() -> None:
     with pytest.raises(KeyError):
         LookupEmission(EMISSION_TABLE).prob(0.42, True)
+
+
+def test_logistic_emission_is_monotone_in_score() -> None:
+    emission = LogisticEmission(slope=1.5, intercept=0.3, base_rate_true=0.8)
+    ratios = [emission.prob(s, True) / emission.prob(s, False) for s in (0.0, 0.2, 0.5, 0.8, 1.0)]
+    assert ratios == sorted(ratios)
+
+
+def test_logistic_emission_single_node_posterior_recovers_calibrated_probability() -> None:
+    # With the prior set to the base rate, a one-node tree's posterior must equal the fitted
+    # P(true | score) -- checks the p(S) cancellation argument in LogisticEmission's docstring.
+    emission = LogisticEmission(slope=1.2, intercept=-0.4, base_rate_true=0.7)
+    tree = HiddenMarkovTree(
+        nodes={"root": TreeNode(node_id="root", score=0.65)},
+        root_id="root",
+        emission=emission,
+        transition=IndependentChildTransition(0.9, 0.1),
+        prior_true=0.7,
+    )
+    assert posterior_root_true(tree) == pytest.approx(emission.p_true_given_score(0.65))

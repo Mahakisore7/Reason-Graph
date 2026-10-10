@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from scripts.fit_emission_model import split_by_response
+from scripts.fit_emission_model import is_claim, split_by_response
 
 
 def _responses() -> list[list[tuple[str, bool]]]:
@@ -29,3 +29,14 @@ def test_same_seed_gives_same_split() -> None:
     assert split_by_response(_responses(), 0.5, seed=7) == split_by_response(
         _responses(), 0.5, seed=7
     )
+
+
+def test_is_claim_drops_list_openers_and_short_segments() -> None:
+    assert not is_claim("Sure, here are some papers on summarization:\n\n\n1.")
+    assert not is_claim("Some of his notable publications are:\\n\\n1.")  # literal backslash-n
+    assert not is_claim("2.")
+
+
+def test_is_claim_keeps_real_statements_with_colons_and_numbers() -> None:
+    assert is_claim("The ratio of the two gases is 3:1.")
+    assert is_claim("Water boils at 100 degrees Celsius at sea level.")

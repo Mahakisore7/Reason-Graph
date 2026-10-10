@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
+import re
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
+from sklearn.linear_model import LogisticRegression
 
 from scripts.backends import add_backend_args, make_backend
+from src.inference.hmt import LogisticEmission
 
 # Same 5 bins (4 edges) as the official repo's configs/hmm.yaml, so our numbers stay
 # comparable to theirs even though we fit them ourselves.
@@ -47,6 +51,34 @@ SPLIT_SEED = 42
 # all 64 segments under 4 words are like this, all labelled true; real claims start at ~5
 # words ("This is known as unihemispheric sleep.").
 MIN_WORDS = 4
+# List openers: "Sure, here are some papers on summarization:\n\n1." -- an intro plus the first
+# list number, not a claim. All 14 in the data are labelled true; the LLM rightly rates them as
+# not-true, which taught the calibration table that low confidence means true. Some segments
+# contain a literal backslash-n instead of a real newline, so both are matched. A line break
+# before the number is required, so "The ratio is 3:1." is not mistaken for one.
+_LIST_OPENER = re.compile(r":[ \t]*(\n|\\n)(\s|\\n)*\d+[.)]?\s*$")
+
+
+def is_claim(segment: str) -> bool:
+    """False for segments that aren't checkable statements: too short, or a list opener."""
+    return len(segment.split()) >= MIN_WORDS and not _LIST_OPENER.search(segment)
+
+
+def fit_logistic(confidences: list[float], labels: list[bool]) -> LogisticEmission:
+    """Platt scaling: logistic regression of the true/false label on logit(confidence).
+
+    Two parameters instead of a 5-bucket table, so it stays stable with few false examples
+    (53 in our fit half) and can't flip direction from bucket to bucket.
+    """
+    eps = LogisticEmission.eps
+    clipped = [min(max(c, eps), 1 - eps) for c in confidences]
+    x = [[math.log(c / (1 - c))] for c in clipped]
+    model = LogisticRegression().fit(x, labels)
+    return LogisticEmission(
+        slope=float(model.coef_[0][0]),
+        intercept=float(model.intercept_[0]),
+        base_rate_true=sum(labels) / len(labels),
+    )
 
 
 def load_felm_science_responses() -> list[Response]:
@@ -66,9 +98,7 @@ def load_felm_science_responses() -> list[Response]:
             sentences = record["segmented_response"]
             labels = record["labels"]
             segments = [
-                (s, bool(label))
-                for s, label in zip(sentences, labels, strict=True)
-                if len(s.split()) >= MIN_WORDS
+                (s, bool(label)) for s, label in zip(sentences, labels, strict=True) if is_claim(s)
             ]
             if segments:
                 responses.append(segments)
@@ -121,9 +151,11 @@ def main() -> None:
     num_bins = len(BIN_EDGES) + 1
     counts_true = [0] * num_bins
     counts_false = [0] * num_bins
+    confidences: list[float] = []
 
     for i, (sentence, is_true) in enumerate(examples):
         confidence = llm.true_false_confidence(sentence)
+        confidences.append(confidence)
         b = bin_index(confidence)
         if is_true:
             counts_true[b] += 1
@@ -141,6 +173,8 @@ def main() -> None:
     print("counts_false:", counts_false)
     print("emission_probs_true:", emission_probs_true)
     print("emission_probs_false:", emission_probs_false)
+    logistic = fit_logistic(confidences, [is_true for _, is_true in examples])
+    print(f"logistic: slope={logistic.slope:.3f} intercept={logistic.intercept:.3f}")
 
     result = {
         "dataset": "FELM-Science",
@@ -158,6 +192,12 @@ def main() -> None:
         "lookup_table": {
             str(b): {"true": emission_probs_true[b], "false": emission_probs_false[b]}
             for b in range(num_bins)
+        },
+        # Smooth alternative to the table (src.inference.hmt.LogisticEmission).
+        "logistic": {
+            "slope": logistic.slope,
+            "intercept": logistic.intercept,
+            "base_rate_true": logistic.base_rate_true,
         },
     }
 

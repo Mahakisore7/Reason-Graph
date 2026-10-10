@@ -175,3 +175,56 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   Both fixes target problems visible in the **fit half** (the flipped table, the list openers),
   not test-half scores. To avoid quietly picking the best-looking option, every variant (raw,
   table, curve, with and without the tree) is scored on the same sentences and all are reported.
+
+## Adopting the paper's own method (Step B)
+
+**D29. Build trees exactly as the official BTProp code does.**
+- *Why:* our trees were 98% decomposition; the paper's FELM trees are 26% (05-results §3b). Our
+  prompts were my own wording. A reproduction should use the paper's method, so any difference in
+  results is about the method, not my prompt writing.
+- *What changed:*
+  - **Prompts copied word for word** from the official repo (`src/prompts.py`, Llama versions):
+    confidence, decomposition, strategy choice, supportive premises, key-question correction.
+    Verified identical by script. The repo has no licence file; the texts are reproduced with
+    attribution for research reproduction. (Changes D1: we now use their prompts, still our own
+    code.)
+  - **Strategy choice by the LLM** (premises / correction / both), as in the paper. Replaces D8.
+  - **Premises: supportive only**, 2 samples, at most 3 kept after the NLI filter. The official
+    code has a contradicting-premise branch, but a `for/else` there always empties it, so their
+    trees have supportive premises only — we follow what the code does.
+  - **Corrections are evidence now:** 5 sampled answers, statement revised to match each, every
+    revision NLI-labelled against the original; a revision that contradicts the original counts
+    against it. Confidence fixed at 1.0 with the paper's own correction emission (0.8 if true vs
+    0.2 if false). Replaces D11, which had switched this evidence off.
+  - **Link probabilities from the official code** (src/hmm.py): equivalence 1.0/0.0; parent ⇒ child
+    1.0/0.5; child ⇒ parent 0.5/0.0; contradiction 0.0/0.5. Replaces my guesses (D12), which had a
+    logic error: "parent false" is no evidence about a contradicting child (0.5), not 0.95.
+  - **Every child NLI-filtered**, decomposition claims included; only the root may be decomposed.
+  - **Sampling done properly:** new `complete_samples(prompt, n)`; repeated `complete()` calls
+    would have replayed one cached answer n times.
+- *Small deviations, on purpose:*
+  - Few-shot examples are sent in one message; the official Llama code splits them into chat turns.
+  - Two official parsing slips fixed: `line.strip("Question: ")` strips *characters* (can eat the
+    end of a question); fixed-width slicing breaks from "Claim 10:" on.
+  - A root with "no check-worthy claims" keeps its own confidence; the official code scores such
+    statements 1.0 (definitely true).
+  - Tree depth stays 1 (paper: 2) — D16.
+
+**D30. Make each segment stand alone before checking it.**
+- *Why:* the paper used a hand-cleaned FELM-Science file (not public) where sentences already stand
+  alone, and its confidence prompt says to treat statements needing context as false. On our raw
+  segments, "This/They/It…" sentences scored AUROC 0.40 even before any tree.
+- *How:* Llama rewrites each segment using its question and full answer as context, told not to
+  add or correct anything. Labels never change.
+- *Safety check:* a rewrite is kept only if the NLI model says it **entails the original** (still
+  says everything the original said). Found necessary in testing: a small model dropped the clause
+  "which is hot enough to melt lead" — possibly the false part — and swapped one sentence for
+  another; both were rejected and the originals kept.
+
+**D31. Version every cache entry by method.**
+- *Found:* cached confidence scores are keyed by statement text, not by prompt, so after a prompt
+  change old scores would be silently reused.
+- *Now:* every cache tag ends in a method version (`btprop`). Earlier runs are untouched, under
+  their old tags.
+- *Consequence:* the unfinished Groq held-out run (243 of 310, our old prompts) is superseded and
+  won't be continued; the Llama run with the official method replaces it.

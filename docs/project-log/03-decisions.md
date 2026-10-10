@@ -153,3 +153,25 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   and a remark after it — both would have become fake claims in the tree.
 - *Checked:* none of Groq's 138 decomposition answers had extra lines, so earlier Groq results
   are unaffected.
+
+## After the first Llama-3-8B run (calibration fix)
+
+**D26. Also remove list openers.**
+- *Found by:* reading the sentences Llama rated near 0 but labelled true.
+- *What:* segments like "Sure, here are some papers on summarization:\n\n1." — an intro plus the
+  first list number. 16 in the raw data, all labelled true. A line break before the number is
+  required, so "The ratio is 3:1." is kept.
+
+**D27. Smooth calibration curve alongside the 5-bucket table.**
+- *Problem:* with 53 false examples, the table flipped direction between buckets (very low
+  confidence counted as evidence of *true*), dropping AUROC from 0.66 to 0.42 before any tree.
+- *Chosen:* logistic regression of the label on logit(confidence) (Platt scaling), fit on the fit
+  half. Two numbers instead of ten, and a higher confidence can never count as weaker evidence.
+- *Deviation from the paper:* the paper uses a binned table, fit on more data. We keep the table
+  and report both.
+
+**D28. Report every variant; disclose the second look at the test half.**
+- *Why:* the Llama results were the first look at the test half; the fixes above were the second.
+  Both fixes target problems visible in the **fit half** (the flipped table, the list openers),
+  not test-half scores. To avoid quietly picking the best-looking option, every variant (raw,
+  table, curve, with and without the tree) is scored on the same sentences and all are reported.

@@ -22,13 +22,14 @@ so it can be read before a mentor review or used to explain the project to someo
 |---|---|---|
 | 0 | Belief-propagation math engine (Hidden Markov Tree) | Done, merged (PR #1) |
 | 1 | Connection to LLMs (fake, cache, OpenAI, Groq) | Done, merged (PR #3) |
-| 2 | Belief-tree construction + first real evaluation on FELM-Science | Code done; faithful reproduction (Llama-3-8B on Kaggle) ready to run |
+| 2 | Belief-tree construction + first real evaluation on FELM-Science | Llama-3-8B run done: tree lowers AUROC (0.670 → 0.588). Cause found (over-decomposition, context, calibration); adopting the paper's prompts next |
 | 3+ | Our novelty: DAG + loopy belief propagation, surrogate scorer | Not started |
 
 ## Open items
 
-- **Faithful reproduction number.** Run `notebooks/kaggle_felm_llama3.ipynb` on Kaggle
-  (steps in [07-running-on-kaggle.md](07-running-on-kaggle.md)). Groq numbers stay provisional.
+- **Faithful reproduction.** Our trees differ from the paper's (98% decomposition vs 26%).
+  Adopt the official prompts and make sentences stand alone, then re-run on Kaggle
+  (see [05-results.md](05-results.md), section 3b).
 - **Groq held-out run** continues within the free daily limit, resuming from cache.
 - **Transition parameters are hand-set guesses** (see [03-decisions.md](03-decisions.md)), not
   learned from data.

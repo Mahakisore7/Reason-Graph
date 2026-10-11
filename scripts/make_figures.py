@@ -15,6 +15,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
 from sklearn.metrics import precision_recall_curve, roc_curve  # noqa: E402
 
 OUT = Path("docs/figures")
@@ -54,7 +55,7 @@ def load(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def save(fig: plt.Figure, name: str) -> None:
+def save(fig: Figure, name: str) -> None:
     fig.savefig(OUT / name)
     plt.close(fig)
     print(f"wrote {OUT / name}")
@@ -156,13 +157,13 @@ def main() -> None:
         ("any_node", COLOR["graph"], "Replace any node (incl. the sentence)"),
     ):
         pts = [p for p in surrogate["curve"] if p["scheme"] == scheme]
-        x = [100 * p["fraction"] for p in pts]
-        y = [p["curve_tree_auroc_mean"] for p in pts]
+        share = [100 * p["fraction"] for p in pts]
+        auroc = [p["curve_tree_auroc_mean"] for p in pts]
         sd = [p["curve_tree_auroc_std"] for p in pts]
-        ax.plot(x, y, color=color, lw=2, marker="o", ms=6, label=label)
-        ax.fill_between(x, [a - b for a, b in zip(y, sd, strict=True)],
-                        [a + b for a, b in zip(y, sd, strict=True)], color=color, alpha=0.15)  # fmt: skip
-        ax.text(x[-1] + 2, y[-1], f"{y[-1]:.3f}", va="center", fontsize=9, color=INK)
+        ax.plot(share, auroc, color=color, lw=2, marker="o", ms=6, label=label)
+        ax.fill_between(share, [a - b for a, b in zip(auroc, sd, strict=True)],
+                        [a + b for a, b in zip(auroc, sd, strict=True)], color=color, alpha=0.15)  # fmt: skip
+        ax.text(share[-1] + 2, auroc[-1], f"{auroc[-1]:.3f}", va="center", fontsize=9, color=INK)
     ax.axhline(surrogate["curve"][0]["curve_tree_auroc_mean"], color=MUTED, lw=1, ls=":")
     ax.set(
         xlabel="Share of Llama confidence scores replaced by the surrogate (%)",

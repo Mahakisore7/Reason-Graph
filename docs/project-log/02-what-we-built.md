@@ -126,6 +126,31 @@ guesses a score for a new sentence from its words alone, in microseconds, on a l
 - It never predicts a node with a model that saw that node's answer (tested).
 - A real trial (small model, 3 FELM answers) ran end to end.
 
+## Phase 5 — the whole method in one call
+
+**In one sentence:** `verify_statement("…")` runs the paper's method on any sentence and
+`verify_answer([...])` runs our answer-level graph, each returning P(true) *and* its working.
+
+**What was built:**
+- `src/pipeline.py` — the tree → probability conversion (`DispatchingTransition`: each parent
+  looks up its own rule — decomposition, or each child's own relationship), `verify_statement`,
+  and the answer-graph code with the chosen link rule (D35). The experiment scripts now import
+  these, so reported numbers come from exactly this code. Re-running the FELM evaluation after
+  the move gave identical scores for every sentence.
+- `scripts/verify.py` — a demo that prints the tree and the verdict. Example (Groq backend):
+
+```
+[root, -, confidence 0.00] The Eiffel Tower, completed in 1889, is located in Berlin.
+    [decomposition, contradiction, confidence 1.00] The Eiffel Tower was completed in 1889.
+    [decomposition, reverse_entailment, confidence 0.00] The Eiffel Tower is located in Berlin.
+P(true) = 0.224 -> LIKELY HALLUCINATION
+```
+
+**How we know it's right:** a decomposition tree gives exactly the number of the same tree
+built by hand with Phase 0's code; a premise + correction tree matches a brute-force sum over
+all 8 true/false combinations (catches a child using the wrong relationship); the threshold
+changes the verdict, never the probability; a root-only tree equals the calibrated confidence.
+
 ## Not built yet
 
-- Phase 5+: full pipeline assembly, full evaluation on all three datasets, final report
+- Review deck and final report (Phases 6, 8); optional: depth-2 trees, the other two datasets

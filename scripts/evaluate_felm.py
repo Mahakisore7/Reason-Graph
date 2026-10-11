@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from sklearn.metrics import roc_auc_score
@@ -36,46 +34,19 @@ from scripts.fit_emission_model import (
 )
 from src.inference.hmt import (
     DecompositionTransition,
-    EmissionModel,
     HiddenMarkovTree,
     LogisticEmission,
     LookupEmission,
     TreeNode,
     posterior_root_true,
 )
-from src.tree.builder import RawBeliefTree, build_belief_tree
+from src.pipeline import Calibration, build_hidden_markov_tree
+from src.tree.builder import build_belief_tree
 from src.tree.nli_labeler import CrossEncoderDirectionalNLI, NLIRelationshipLabeler
-from src.tree.relationships import DEFAULT_TRANSITION_PARAMS, Relationship
 
 # One level of children (the paper expands two) -- D16: depth 2 multiplies the LLM calls per
 # statement several times over, beyond one free Kaggle session.
 MAX_DEPTH = 1
-
-# Corrections have confidence fixed at 1.0 and their own emission in the official code
-# (configs/hmm.yaml, perturb_emission_probs, top bucket): 0.8 if true, 0.2 if false. They're
-# marked with a score outside [0, 1] so one emission model can serve the whole tree.
-CORRECTION_SCORE = -1.0
-CORRECTION_EMISSION = {True: 0.8, False: 0.2}
-
-
-@dataclass(frozen=True)
-class WithCorrectionEmission:
-    base: EmissionModel
-
-    def prob(self, score: float, truth: bool) -> float:
-        if score == CORRECTION_SCORE:
-            return CORRECTION_EMISSION[truth]
-        return self.base.prob(score, truth)
-
-
-@dataclass(frozen=True)
-class Calibration:
-    """One way of turning an LLM confidence into evidence: an emission model, plus how a raw
-    confidence becomes the score that model expects."""
-
-    name: str
-    emission: EmissionModel
-    to_score: Callable[[float], float]
 
 
 def load_calibrations(run_name: str) -> list[Calibration]:
@@ -105,61 +76,7 @@ def root_only_posterior(confidence: float, calibration: Calibration) -> float:
     return posterior_root_true(tree)
 
 
-@dataclass
-class AssembledTransition:
-    """Bridges RawBeliefTree's per-child Relationship labels onto Phase 0's single shared
-    TransitionModel. Per parent, dispatches to whichever semantics its children actually need:
-    decomposition children reuse DecompositionTransition unchanged (delegated, not
-    re-derived); premise/correction children use DEFAULT_TRANSITION_PARAMS per relationship,
-    combined assuming conditional independence across siblings (matching
-    IndependentChildTransition's approach in Phase 0, but with per-child parameters instead of
-    one global pair).
-    """
-
-    raw_tree: RawBeliefTree
-    relationship_params: dict[Relationship, tuple[float, float]]
-    _decomposition: DecompositionTransition = field(
-        default_factory=DecompositionTransition, init=False, repr=False
-    )
-
-    def joint_prob(
-        self, parent_id: str, parent_truth: bool, children_truth: tuple[bool, ...]
-    ) -> float:
-        child_ids = self.raw_tree.nodes[parent_id].children
-        first_child = self.raw_tree.nodes[child_ids[0]]
-        if first_child.strategy == "decomposition":
-            return self._decomposition.joint_prob(parent_id, parent_truth, children_truth)
-
-        probability = 1.0
-        for child_id, child_truth in zip(child_ids, children_truth, strict=True):
-            relationship = self.raw_tree.nodes[child_id].relationship_to_parent
-            assert relationship is not None, "every non-root node is NLI-labelled"
-            p_true_given_true, p_true_given_false = self.relationship_params[relationship]
-            p_true = p_true_given_true if parent_truth else p_true_given_false
-            probability *= p_true if child_truth else (1.0 - p_true)
-        return probability
-
-
-def raw_tree_to_hmt(raw: RawBeliefTree, calibration: Calibration) -> HiddenMarkovTree:
-    nodes = {
-        node_id: TreeNode(
-            node_id=node_id,
-            score=(
-                CORRECTION_SCORE
-                if raw_node.strategy == "correction"
-                else calibration.to_score(raw_node.confidence)
-            ),
-            children=tuple(raw_node.children),
-        )
-        for node_id, raw_node in raw.nodes.items()
-    }
-    transition = AssembledTransition(raw_tree=raw, relationship_params=DEFAULT_TRANSITION_PARAMS)
-    return HiddenMarkovTree(
-        nodes=nodes,
-        root_id=raw.root_id,
-        emission=WithCorrectionEmission(calibration.emission),
-        transition=transition,
-    )
+raw_tree_to_hmt = build_hidden_markov_tree  # name used by the other experiment scripts
 
 
 def main() -> None:

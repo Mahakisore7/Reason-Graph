@@ -74,8 +74,58 @@ reported "no credit" after retrying; Groq returned sensible scores.
 **35 tests total, all passing.** Every commit also passes automatic checks: `ruff` (style),
 `mypy --strict` (types), `pytest`.
 
+## Phase 3 — one graph per answer, loopy belief propagation (novelty 1)
+
+**In one sentence:** instead of checking each sentence alone, all sentences of one answer go
+into one graph, linked where they support or contradict each other, and loopy belief
+propagation works out every sentence's probability of being true at once.
+
+**Example.** An answer says (1) "The Eiffel Tower is in Berlin" and (2) "The Eiffel Tower is
+in Paris". Checked alone, each might look fairly likely. NLI labels them a contradiction, so
+in the graph they cannot both be true — the evidence for one now counts against the other.
+
+**What was built:**
+- `src/inference/loopy.py` — loopy BP on a factor graph. A *factor* is a small table saying how
+  likely each true/false combination of a few claims is: the LLM evidence for one claim, a
+  tree's parent-children rule, or a link between two sentences. Messages are passed between
+  factors and claims until nothing changes (or a round limit is hit, reported as "not
+  converged").
+- `scripts/evaluate_graph.py` — builds the graph for every test answer from the paper's trees
+  plus NLI links between sentences, and reports tree vs. graph AUROC and convergence counts.
+
+**How we know it's right:**
+- On a plain tree the graph code reproduces the exact tree math to 12 decimals.
+- On a graph with a loop it is checked against brute force (all 16 combinations): close, not
+  exact — the known behaviour of loopy BP.
+- With no links between sentences, every sentence keeps exactly its tree score; a contradiction
+  link lowers both sentences; an equivalence link pulls a weak sentence up.
+- A real trial (small model, 2 FELM answers) ran end to end; every run converged.
+
+## Phase 4 — cheap surrogate confidence scores (novelty 2)
+
+**In one sentence:** a tiny text model learns to guess what Llama's True/False confidence would
+be, so some tree nodes can skip the Llama call.
+
+**Example.** Llama gave "Water boils at 100 °C at sea level" 0.97 and "The Moon is made of
+cheese" 0.02. After seeing a few hundred such (sentence, Llama score) pairs, the tiny model
+guesses a score for a new sentence from its words alone, in microseconds, on a laptop.
+
+**What was built:**
+- `src/surrogate/embedder.py` — turns a sentence into numbers by hashing its words and word
+  pairs into 4096 slots (no download, nothing to learn).
+- `src/surrogate/model.py` — ridge regression from those numbers to Llama's confidence,
+  clipped to [0, 1]; refuses to predict before it has been trained.
+- `scripts/evaluate_surrogate.py` — replaces 0–100% of nodes' Llama scores with the surrogate's
+  and reports how AUROC changes, plus how far the surrogate is from Llama compared with just
+  guessing the average.
+
+**How we know it's right:**
+- On made-up sentences it learns a real pattern: "All politicians always tell the complete
+  truth" scores clearly lower than "Many politicians try to be honest most of the time", though
+  neither was in its training data.
+- It never predicts a node with a model that saw that node's answer (tested).
+- A real trial (small model, 3 FELM answers) ran end to end.
+
 ## Not built yet
 
-- Phase 3: DAG + loopy belief propagation (novelty 1)
-- Phase 4: surrogate confidence scorer (novelty 2)
 - Phase 5+: full pipeline assembly, full evaluation on all three datasets, final report

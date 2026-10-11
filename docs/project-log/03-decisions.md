@@ -228,3 +228,51 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   their old tags.
 - *Consequence:* the unfinished Groq held-out run (243 of 310, our old prompts) is superseded and
   won't be continued; the Llama run with the official method replaces it.
+
+## Phase 3 — graph instead of tree (our novelty, extension 1)
+
+**D32. Loopy BP on a factor graph with joint factors, not pairwise edges only.**
+- *Why:* the Phase 3 plan allowed pairwise links only, which cannot express the paper's
+  decomposition rule ("parent true only if *all* its claims are true" is a rule over the whole
+  group at once). With factors that can cover any number of claims, every paper tree carries over
+  unchanged, so the graph result is *exactly* the tree result whenever no extra links are added.
+- *Checked:* on the Phase 0 tree the graph code gives 0.8209483368719038, matching to 12 decimals
+  (independent-children and decomposition trees both); on a looped "diamond" it is within 0.05
+  of a brute-force answer from all 16 true/false combinations, and — as expected on a real loop —
+  not exact.
+- *Choices written down:* synchronous ("flooding") updates; damping 0.5; tolerance 1e-6; at most
+  200 rounds. Convergence is reported per run, never assumed (0 rounds ⇒ "not converged").
+
+**D33. Where the graph comes from: one graph per FELM answer.**
+- *Idea:* the paper checks every sentence of an answer in isolation. But sentences of one answer
+  are about the same thing and can support or contradict each other. We join the trees of all
+  sentences in an answer, adding a link wherever NLI says two sentences are related (same four
+  relationships and probabilities as tree links). A sentence linked to two others has two
+  "parents", so loops appear and loopy BP replaces the exact tree recursion.
+- *Softened links:* cross-sentence link probabilities are kept within [0.05, 0.95], so one NLI
+  mistake can make two sentences unlikely together but never impossible. The value 0.05 was fixed
+  before seeing any test result and is not tuned.
+- *Fair comparison:* same test sentences, same trees (same LLM cache), same calibration; only the
+  links differ. Both "tree" and "graph" AUROC are reported for both calibrations.
+- *Limit:* links are between sentence roots only (not premises of different sentences), to keep
+  the number of NLI calls small; a possible follow-up.
+
+## Phase 4 — cheaper confidence scores (our novelty, extension 2)
+
+**D34. How the surrogate is trained and tested.**
+- *What it is:* hashed words and word pairs (4096 slots, no vocabulary, nothing downloaded) →
+  ridge regression → clipped to [0, 1]. It predicts the **LLM's confidence**, never the human
+  truth label, so it can stand in for an LLM call.
+- *4096 slots, not the plan's 256:* with word pairs, 256 slots would make many unrelated words
+  collide.
+- *No leakage:* test answers are split into 5 groups; each group's nodes are predicted by a
+  surrogate trained on the other 4 groups plus the fit-half sentences (whose Llama scores already
+  exist from fitting the calibration). A node is never predicted by a model that saw its answer.
+- *Honest baseline:* its error is reported next to "always predict the average confidence"; it
+  has to beat that to count as having learned anything.
+- *The curve:* 0, 25, 50, 75, 100% of LLM-scored nodes replaced (random, 5 repeats, mean ± std),
+  tree AUROC recomputed each time. Two schemes: any node, or child nodes only (root keeps its
+  real score). Corrections are not counted — their confidence is fixed at 1.0 and never costs a
+  call.
+- *Limit, stated plainly:* only the confidence calls are saved. Generating premises and
+  corrections still needs the LLM, so the saving is a share of confidence calls, not of all calls.

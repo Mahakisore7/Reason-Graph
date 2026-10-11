@@ -121,9 +121,9 @@ def load_felm_science_responses() -> list[Response]:
     return [a.segments for a in load_felm_science_answers()]
 
 
-def split_by_response(
+def split_answers(
     responses: list[Response], fit_fraction: float, seed: int
-) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+) -> tuple[list[Response], list[Response]]:
     """Splits whole answers (not individual segments) into a fit set and a test set.
 
     Segments from the same answer share topic and wording, so splitting segment-by-segment
@@ -132,17 +132,33 @@ def split_by_response(
     false examples instead of whatever one shuffle happens to give.
     """
     rng = random.Random(seed)
-    fit: list[tuple[str, bool]] = []
-    test: list[tuple[str, bool]] = []
+    fit: list[Response] = []
+    test: list[Response] = []
     has_error = [r for r in responses if not all(label for _, label in r)]
     error_free = [r for r in responses if all(label for _, label in r)]
     for group in (has_error, error_free):
         shuffled = group[:]
         rng.shuffle(shuffled)
         num_fit = round(len(shuffled) * fit_fraction)
-        fit += [seg for r in shuffled[:num_fit] for seg in r]
-        test += [seg for r in shuffled[num_fit:] for seg in r]
+        fit += shuffled[:num_fit]
+        test += shuffled[num_fit:]
     return fit, test
+
+
+def split_by_response(
+    responses: list[Response], fit_fraction: float, seed: int
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """split_answers, flattened to segments."""
+    fit, test = split_answers(responses, fit_fraction, seed)
+    return [seg for r in fit for seg in r], [seg for r in test for seg in r]
+
+
+def load_felm_science_test_answers(standalone: dict[str, str] | None = None) -> list[Response]:
+    """The test half grouped by answer (same split as load_felm_science_split), for the
+    answer-level graph (Phase 3)."""
+    _, test = split_answers(load_felm_science_responses(), FIT_FRACTION, SPLIT_SEED)
+    standalone = standalone or {}
+    return [[(standalone.get(s, s), label) for s, label in r] for r in test]
 
 
 def standalone_path(run_name: str) -> Path:

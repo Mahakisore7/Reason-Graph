@@ -228,3 +228,31 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   their old tags.
 - *Consequence:* the unfinished Groq held-out run (243 of 310, our old prompts) is superseded and
   won't be continued; the Llama run with the official method replaces it.
+
+## Phase 3 — graph instead of tree (our novelty, extension 1)
+
+**D32. Loopy BP on a factor graph with joint factors, not pairwise edges only.**
+- *Why:* the Phase 3 plan allowed pairwise links only, which cannot express the paper's
+  decomposition rule ("parent true only if *all* its claims are true" is a rule over the whole
+  group at once). With factors that can cover any number of claims, every paper tree carries over
+  unchanged, so the graph result is *exactly* the tree result whenever no extra links are added.
+- *Checked:* on the Phase 0 tree the graph code gives 0.8209483368719038, matching to 12 decimals
+  (independent-children and decomposition trees both); on a looped "diamond" it is within 0.05
+  of a brute-force answer from all 16 true/false combinations, and — as expected on a real loop —
+  not exact.
+- *Choices written down:* synchronous ("flooding") updates; damping 0.5; tolerance 1e-6; at most
+  200 rounds. Convergence is reported per run, never assumed (0 rounds ⇒ "not converged").
+
+**D33. Where the graph comes from: one graph per FELM answer.**
+- *Idea:* the paper checks every sentence of an answer in isolation. But sentences of one answer
+  are about the same thing and can support or contradict each other. We join the trees of all
+  sentences in an answer, adding a link wherever NLI says two sentences are related (same four
+  relationships and probabilities as tree links). A sentence linked to two others has two
+  "parents", so loops appear and loopy BP replaces the exact tree recursion.
+- *Softened links:* cross-sentence link probabilities are kept within [0.05, 0.95], so one NLI
+  mistake can make two sentences unlikely together but never impossible. The value 0.05 was fixed
+  before seeing any test result and is not tuned.
+- *Fair comparison:* same test sentences, same trees (same LLM cache), same calibration; only the
+  links differ. Both "tree" and "graph" AUROC are reported for both calibrations.
+- *Limit:* links are between sentence roots only (not premises of different sentences), to keep
+  the number of NLI calls small; a possible follow-up.

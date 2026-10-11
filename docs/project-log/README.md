@@ -23,7 +23,8 @@ so it can be read before a mentor review or used to explain the project to someo
 | 0 | Belief-propagation math engine (Hidden Markov Tree) | Done, merged (PR #1) |
 | 1 | Connection to LLMs (fake, cache, OpenAI, Groq) | Done, merged (PR #3) |
 | 2 | Belief-tree construction + first real evaluation on FELM-Science | First Llama run: tree lowered AUROC (0.670 → 0.588) — our trees weren't the paper's. Rebuilt with the paper's own method (D29) + stand-alone sentences (D30); Kaggle run pending |
-| 3+ | Our novelty: DAG + loopy belief propagation, surrogate scorer | Not started |
+| 3 | Our novelty 1: one graph per answer + loopy belief propagation | Code and tests done (D32, D33); real numbers after the Kaggle run |
+| 4 | Our novelty 2: cheap surrogate confidence scorer | Not started |
 
 ## Open items
 

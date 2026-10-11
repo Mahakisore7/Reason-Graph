@@ -129,6 +129,93 @@ From the official repo (`UCSB-NLP-Chang/BTProp`):
 stand alone before building trees.
 
 
+## 3c. Llama-3-8B, the paper's own method + stand-alone sentences (D29, D30)
+
+Second Kaggle run: the paper's prompts and tree rules, every sentence first rewritten to stand
+alone. Same split: calibration fit on 291 sentences, tested once on 304 (49 false).
+
+**Stand-alone rewriting:** 385 of 594 sentences rewritten; 122 proposed rewrites rejected by the
+safety check (original kept). Examples:
+- kept: "No, WiFi generally has a longer range than Bluetooth." → "WiFi generally has a longer
+  range than Bluetooth."
+- kept: "The distance between the slits is…" → "The distance between Young's two slits is…"
+- rejected, correctly: "Yes, there can be an explosion without fire." → a different sentence
+  about causes of explosions.
+- rejected, too strictly: "They code for traits…" → "Genes code for traits…". The check is
+  conservative: when unsure, it keeps the original.
+
+| What's scored | First run (3b) | This run | 95% range (bootstrap) |
+|---|---|---|---|
+| Llama's raw confidence | 0.670 | **0.745** | 0.67–0.81 |
+| 5-bucket table only | 0.420 | 0.635 | 0.54–0.73 |
+| 5-bucket table + tree | 0.499 | 0.678 | 0.58–0.77 |
+| Smooth curve only | 0.670 | 0.745 | (same as raw) |
+| **Smooth curve + tree** | 0.588 | **0.741** | 0.65–0.82 |
+
+**What this shows:**
+- Stand-alone sentences were the biggest single fix: raw AUROC 0.670 → 0.745.
+- The tree no longer hurts (was −0.08), but does not clearly help: curve + tree minus raw is
+  −0.004, with a bootstrap range of −0.05 to +0.04 (2,000 resamples of the test sentences) — no
+  real difference. With the table, the tree adds +0.04 (range −0.04 to +0.13), also not
+  significant.
+- 50 sentences got no children (nothing checkable to expand); 254 got a tree.
+- The paper reports BTProp beating the *best baseline* by about 3–9% on FELM-Science. Likely
+  reasons we see no gain: trees of depth 1, not 2 (D16, free-GPU time limit); the paper's
+  hand-cleaned dataset (not public); one test set of 49 false sentences, so differences under
+  ~0.05 cannot be told apart from chance.
+
+## 3d. Our extension 1 — one graph per answer, loopy BP (D32, D33)
+
+Same 304 test sentences, same trees and calibration as 3c; only the links between sentences of
+the same answer are new. Run on the laptop GPU (RTX 4050) from the saved Llama answers.
+
+- 61 answers, **168 links** between sentences: 96 contradiction, 53 entailment, 15 reverse
+  entailment, 4 equivalence. 32 answer graphs had real loops.
+- **Convergence: 122 of 122 runs converged** (all 32 looped ones too), at most 76 rounds.
+
+| What's scored | Tree (paper) | Graph (ours) |
+|---|---|---|
+| 5-bucket table | 0.678 | **0.697** |
+| Smooth curve | **0.741** | 0.728 |
+
+Only answers that got at least one link (231 sentences, 33 false): table 0.675 → 0.718, curve
+0.783 → 0.772.
+
+**What this shows:** no clear gain. Graph minus tree with the curve is −0.014 (bootstrap range
+−0.07 to +0.04); with the table it is +0.02. Neither is beyond chance. The likely culprit is the
+links themselves: 96 of 168 are "contradiction", far more than two sentences of one ChatGPT
+answer really contradict each other. The NLI model tends to call two different facts about one
+topic a contradiction (known weakness 4). Loopy BP itself behaved well: it always settled, and
+on trees it matches the exact math. **Next step if time allows:** keep a contradiction link only
+when NLI is confident, or only entailment links, decided on the fit half — not the test half.
+
+## 3e. Our extension 2 — cheap surrogate confidence scores (D34)
+
+812 LLM-scored nodes (304 sentences + 508 premises/claims). Each node's score predicted by a
+surrogate that never saw its answer.
+
+**How close to Llama (mean absolute error):** surrogate 0.247 vs. always guessing the average
+0.258. It learned only a little — hashed words carry little of what Llama knows.
+
+| Llama scores replaced | Any node: curve AUROC | Children only: curve AUROC | Calls saved (children only) |
+|---|---|---|---|
+| 0% | 0.741 | 0.741 | 0 of 812 |
+| 25% | 0.727 ± 0.005 | 0.744 ± 0.006 | 127 |
+| 50% | 0.700 ± 0.016 | 0.748 ± 0.010 | 254 |
+| 75% | 0.677 ± 0.023 | 0.751 ± 0.012 | 381 |
+| 100% | 0.627 | **0.757** | 508 (63%) |
+
+(With the 5-bucket table, every replacement lowers AUROC: 0.678 → 0.553 any node, → 0.609
+children only.)
+
+**What this shows:**
+- Replacing a sentence's *own* score hurts steadily — that score is the main evidence.
+- Replacing only the children's scores **saves 63% of the confidence calls with no loss** in
+  the curve setting (0.741 → 0.757, within chance). Honest reading: the surrogate's guesses sit
+  near the average, so children then carry little evidence — which tells us the children's real
+  Llama scores were adding little anyway (matches 3c: tree ≈ raw).
+- Only confidence calls are saved; generating premises and corrections still costs LLM calls.
+
 ## 4. Known weaknesses of these numbers
 
 1. **Typed-out confidence, not logprobs.** Fixed by the Llama-3-8B run on Kaggle (D22).
@@ -140,6 +227,6 @@ stand alone before building trees.
 
 ## Comparison with the paper
 
-Not done yet. A fair comparison needs the paper's confidence method (token probabilities —
-coming from the Llama-3-8B Kaggle run) and similar tree depth. Until then, compare only
-**raw vs. tree within our own runs**.
+Same model (Llama-3-8B-Instruct), same confidence method, the paper's prompts. Differences that
+remain: tree depth 1 vs. 2, our automatic stand-alone rewriting vs. their hand-cleaned file. Our
+result: the tree method matches raw confidence (0.741 vs. 0.745) instead of beating it — see 3c.

@@ -67,3 +67,17 @@ def test_label_cross_links_keeps_only_related_pairs() -> None:
         CrossLink(child=2, parent=0, relationship=Relationship.CONTRADICTION)
     ]
     assert labeler.call_count == 3  # every unordered pair once
+
+
+def test_link_rules_filter_contradictions() -> None:
+    from scripts.evaluate_graph import RuleLabeler
+    from src.tree.nli_labeler import FakeDirectionalNLI
+
+    one_sided = FakeDirectionalNLI(labels={("B", "A"): "contradiction"})
+    both = FakeDirectionalNLI(labels={("B", "A"): "contradiction", ("A", "B"): "contradiction"})
+    entails = FakeDirectionalNLI(labels={("B", "A"): "entailment"})
+    assert RuleLabeler(one_sided, "any").label("B", "A") is Relationship.CONTRADICTION
+    assert RuleLabeler(one_sided, "strict").label("B", "A") is Relationship.NEUTRAL
+    assert RuleLabeler(both, "strict").label("B", "A") is Relationship.CONTRADICTION
+    assert RuleLabeler(both, "no_contradiction").label("B", "A") is Relationship.NEUTRAL
+    assert RuleLabeler(entails, "no_contradiction").label("B", "A") is Relationship.ENTAILMENT

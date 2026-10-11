@@ -256,3 +256,23 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   links differ. Both "tree" and "graph" AUROC are reported for both calibrations.
 - *Limit:* links are between sentence roots only (not premises of different sentences), to keep
   the number of NLI calls small; a possible follow-up.
+
+## Phase 4 — cheaper confidence scores (our novelty, extension 2)
+
+**D34. How the surrogate is trained and tested.**
+- *What it is:* hashed words and word pairs (4096 slots, no vocabulary, nothing downloaded) →
+  ridge regression → clipped to [0, 1]. It predicts the **LLM's confidence**, never the human
+  truth label, so it can stand in for an LLM call.
+- *4096 slots, not the plan's 256:* with word pairs, 256 slots would make many unrelated words
+  collide.
+- *No leakage:* test answers are split into 5 groups; each group's nodes are predicted by a
+  surrogate trained on the other 4 groups plus the fit-half sentences (whose Llama scores already
+  exist from fitting the calibration). A node is never predicted by a model that saw its answer.
+- *Honest baseline:* its error is reported next to "always predict the average confidence"; it
+  has to beat that to count as having learned anything.
+- *The curve:* 0, 25, 50, 75, 100% of LLM-scored nodes replaced (random, 5 repeats, mean ± std),
+  tree AUROC recomputed each time. Two schemes: any node, or child nodes only (root keeps its
+  real score). Corrections are not counted — their confidence is fixed at 1.0 and never costs a
+  call.
+- *Limit, stated plainly:* only the confidence calls are saved. Generating premises and
+  corrections still needs the LLM, so the saving is a share of confidence calls, not of all calls.

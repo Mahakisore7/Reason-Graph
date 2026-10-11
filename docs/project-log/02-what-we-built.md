@@ -101,7 +101,31 @@ in the graph they cannot both be true — the evidence for one now counts agains
   link lowers both sentences; an equivalence link pulls a weak sentence up.
 - A real trial (small model, 2 FELM answers) ran end to end; every run converged.
 
+## Phase 4 — cheap surrogate confidence scores (novelty 2)
+
+**In one sentence:** a tiny text model learns to guess what Llama's True/False confidence would
+be, so some tree nodes can skip the Llama call.
+
+**Example.** Llama gave "Water boils at 100 °C at sea level" 0.97 and "The Moon is made of
+cheese" 0.02. After seeing a few hundred such (sentence, Llama score) pairs, the tiny model
+guesses a score for a new sentence from its words alone, in microseconds, on a laptop.
+
+**What was built:**
+- `src/surrogate/embedder.py` — turns a sentence into numbers by hashing its words and word
+  pairs into 4096 slots (no download, nothing to learn).
+- `src/surrogate/model.py` — ridge regression from those numbers to Llama's confidence,
+  clipped to [0, 1]; refuses to predict before it has been trained.
+- `scripts/evaluate_surrogate.py` — replaces 0–100% of nodes' Llama scores with the surrogate's
+  and reports how AUROC changes, plus how far the surrogate is from Llama compared with just
+  guessing the average.
+
+**How we know it's right:**
+- On made-up sentences it learns a real pattern: "All politicians always tell the complete
+  truth" scores clearly lower than "Many politicians try to be honest most of the time", though
+  neither was in its training data.
+- It never predicts a node with a model that saw that node's answer (tested).
+- A real trial (small model, 3 FELM answers) ran end to end.
+
 ## Not built yet
 
-- Phase 4: surrogate confidence scorer (novelty 2)
 - Phase 5+: full pipeline assembly, full evaluation on all three datasets, final report

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.evaluate_felm import Calibration, raw_tree_to_hmt
-from scripts.evaluate_graph import CrossLink, build_answer_graph, label_cross_links
 from src.inference.hmt import LogisticEmission, posterior_root_true
 from src.inference.loopy import run_loopy_bp
+from src.pipeline import Calibration, CrossLink, build_answer_graph, label_cross_links
+from src.pipeline import build_hidden_markov_tree as raw_tree_to_hmt
 from src.tree.builder import RawBeliefTree, RawNode
 from src.tree.relationships import FakeRelationshipLabeler, Relationship
 
@@ -70,7 +70,7 @@ def test_label_cross_links_keeps_only_related_pairs() -> None:
 
 
 def test_link_rules_filter_contradictions() -> None:
-    from scripts.evaluate_graph import RuleLabeler
+    from src.pipeline import RuleLabeler
     from src.tree.nli_labeler import FakeDirectionalNLI
 
     one_sided = FakeDirectionalNLI(labels={("B", "A"): "contradiction"})

@@ -26,13 +26,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from sklearn.metrics import roc_auc_score
 
 from scripts.backends import add_backend_args, make_backend
-from scripts.evaluate_felm import MAX_DEPTH, Calibration, load_calibrations, raw_tree_to_hmt
+from scripts.evaluate_felm import MAX_DEPTH, load_calibrations, raw_tree_to_hmt
 from scripts.fit_emission_model import (
     add_standalone_arg,
     load_felm_science_test_answers,
@@ -40,100 +39,22 @@ from scripts.fit_emission_model import (
     result_name,
 )
 from src.inference.hmt import posterior_root_true
-from src.inference.loopy import FactorGraph, add_tree, pairwise_factor, run_loopy_bp
-from src.tree.builder import RawBeliefTree, build_belief_tree
+from src.inference.loopy import run_loopy_bp
+from src.pipeline import (
+    CONVERGENCE_TOL,
+    DAMPING,
+    LINK_EPS,
+    LINK_RULES,
+    MAX_ITERATIONS,
+    RuleLabeler,
+    build_answer_graph,
+    label_cross_links,
+)
+from src.tree.builder import build_belief_tree
 from src.tree.nli_labeler import (
     CrossEncoderDirectionalNLI,
-    DirectionalNLI,
     NLIRelationshipLabeler,
 )
-from src.tree.relationships import DEFAULT_TRANSITION_PARAMS, Relationship, RelationshipLabeler
-
-LINK_EPS = 0.05  # cross-link probabilities are kept inside [LINK_EPS, 1 - LINK_EPS]
-MAX_ITERATIONS = 200
-CONVERGENCE_TOL = 1e-6
-DAMPING = 0.5  # fixed in advance; only affects speed of settling, not the fixed point
-
-
-@dataclass(frozen=True)
-class CrossLink:
-    child: int  # index of the sentence used as NLI premise
-    parent: int  # index of the sentence used as NLI hypothesis
-    relationship: Relationship
-
-
-def soften(p: float) -> float:
-    return min(max(p, LINK_EPS), 1 - LINK_EPS)
-
-
-LINK_RULES = ("any", "strict", "no_contradiction")
-
-
-@dataclass
-class RuleLabeler:
-    """Which NLI answers count as a cross link (D35). The tree links always use the paper's
-    labeller; only links BETWEEN sentences go through a rule:
-        any               -- the paper's labeller: contradiction if either direction says so;
-        strict            -- contradiction only if BOTH directions say so (one-sided calls were
-                             mostly two different facts on one topic);
-        no_contradiction  -- contradiction links dropped, entailment-type links kept.
-    """
-
-    directional: DirectionalNLI
-    rule: str = "any"
-
-    def label(self, premise: str, hypothesis: str) -> Relationship:
-        base = NLIRelationshipLabeler(self.directional).label(premise, hypothesis)
-        if base is not Relationship.CONTRADICTION or self.rule == "any":
-            return base
-        if self.rule == "no_contradiction":
-            return Relationship.NEUTRAL
-        forward = self.directional.label_direction(premise, hypothesis)
-        backward = self.directional.label_direction(hypothesis, premise)
-        both = forward == "contradiction" and backward == "contradiction"
-        return Relationship.CONTRADICTION if both else Relationship.NEUTRAL
-
-
-def label_cross_links(statements: list[str], labeler: RelationshipLabeler) -> list[CrossLink]:
-    """One label per unordered pair (the labeler already checks both directions). The later
-    sentence is the 'child' only as a naming convention -- the relationship carries the
-    direction."""
-    links = []
-    for parent in range(len(statements)):
-        for child in range(parent + 1, len(statements)):
-            relationship = labeler.label(statements[child], statements[parent])
-            if relationship is not Relationship.NEUTRAL:
-                links.append(CrossLink(child, parent, relationship))
-    return links
-
-
-@dataclass
-class AnswerGraph:
-    graph: FactorGraph
-    root_names: list[str]
-    has_cycle: bool = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.has_cycle = self.graph.has_cycle()
-
-
-def build_answer_graph(
-    trees: list[RawBeliefTree], links: list[CrossLink], calibration: Calibration
-) -> AnswerGraph:
-    graph = FactorGraph()
-    root_names = []
-    for k, raw in enumerate(trees):
-        prefix = f"s{k}/"
-        add_tree(graph, raw_tree_to_hmt(raw, calibration), prefix)
-        root_names.append(prefix + raw.root_id)
-    for link in links:
-        p_tt, p_tf = DEFAULT_TRANSITION_PARAMS[link.relationship]
-        graph.add_factor(
-            pairwise_factor(
-                root_names[link.parent], root_names[link.child], soften(p_tt), soften(p_tf)
-            )
-        )
-    return AnswerGraph(graph, root_names)
 
 
 def main() -> None:

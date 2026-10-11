@@ -19,15 +19,6 @@ from pathlib import Path
 
 from scripts.backends import add_backend_args, make_backend
 from scripts.evaluate_felm import load_calibrations
-from scripts.evaluate_graph import (
-    CONVERGENCE_TOL,
-    DAMPING,
-    LINK_RULES,
-    MAX_ITERATIONS,
-    RuleLabeler,
-    build_answer_graph,
-    label_cross_links,
-)
 from scripts.fit_emission_model import (
     FIT_FRACTION,
     SPLIT_SEED,
@@ -39,6 +30,15 @@ from scripts.fit_emission_model import (
 )
 from src.eval.metrics import all_metrics
 from src.inference.loopy import run_loopy_bp
+from src.pipeline import (
+    CONVERGENCE_TOL,
+    DAMPING,
+    LINK_RULES,
+    MAX_ITERATIONS,
+    RuleLabeler,
+    build_answer_graph,
+    label_cross_links,
+)
 from src.tree.builder import RawBeliefTree, RawNode
 from src.tree.nli_labeler import CrossEncoderDirectionalNLI
 

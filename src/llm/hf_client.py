@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from src.llm.prompts import true_false_confidence_prompt
+from src.llm.prompts import llama_confidence_messages
 
 # The model the BTProp paper itself evaluates. The official meta-llama/ repo needs a manual
 # licence approval; this is an ungated copy of the same weights (same Llama 3 licence).
@@ -84,21 +84,21 @@ class HuggingFaceClient:
 
         return single_token_ids(_TRUE_VARIANTS), single_token_ids(_FALSE_VARIANTS)
 
-    def _chat_input_ids(self, prompt: str) -> Any:
+    def _chat_input_ids(self, messages: list[dict[str, str]]) -> Any:
         # Render the chat template to text first, then tokenize: apply_chat_template's own
         # return type differs between transformers versions (Kaggle's vs. ours).
         text = self._tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True
+            messages, tokenize=False, add_generation_prompt=True
         )
         encoded = self._tokenizer(text, return_tensors="pt", add_special_tokens=False)
         return encoded["input_ids"].to(self._model.device)
 
-    def complete(self, prompt: str, *, max_tokens: int = 512, temperature: float = 0.0) -> str:
+    def _generate(self, prompt: str, n: int, max_tokens: int, temperature: float) -> list[str]:
         import torch
 
-        input_ids = self._chat_input_ids(prompt)
+        input_ids = self._chat_input_ids([{"role": "user", "content": prompt}])
         sampling: dict[str, Any] = (
-            {"do_sample": True, "temperature": temperature}
+            {"do_sample": True, "temperature": temperature, "num_return_sequences": n}
             if temperature > 0
             else {"do_sample": False, "temperature": None, "top_p": None, "top_k": None}
         )
@@ -110,14 +110,27 @@ class HuggingFaceClient:
                 pad_token_id=self._tokenizer.eos_token_id,
                 **sampling,
             )
-        new_tokens = output[0, input_ids.shape[1] :]
-        text: str = self._tokenizer.decode(new_tokens, skip_special_tokens=True)
-        return text.strip()
+        texts = [
+            str(self._tokenizer.decode(row[input_ids.shape[1] :], skip_special_tokens=True)).strip()
+            for row in output
+        ]
+        # Greedy decoding gives the same text every time, so n copies of one answer.
+        return texts if temperature > 0 else texts * n
+
+    def complete(self, prompt: str, *, max_tokens: int = 512, temperature: float = 0.0) -> str:
+        return self._generate(prompt, 1, max_tokens, temperature)[0]
+
+    def complete_samples(
+        self, prompt: str, n: int, *, max_tokens: int = 512, temperature: float = 0.7
+    ) -> list[str]:
+        # One generate call with num_return_sequences=n: the n samples run in parallel on the
+        # GPU, so 5 samples cost about as much time as 1.
+        return self._generate(prompt, n, max_tokens, temperature)
 
     def true_false_confidence(self, statement: str) -> float:
         import torch
 
-        input_ids = self._chat_input_ids(true_false_confidence_prompt(statement))
+        input_ids = self._chat_input_ids(llama_confidence_messages(statement))
         with torch.no_grad():
             logits = self._model(input_ids).logits[0, -1]
         probs = torch.softmax(logits.float(), dim=-1).tolist()

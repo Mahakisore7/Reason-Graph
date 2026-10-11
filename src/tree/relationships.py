@@ -40,22 +40,18 @@ class FakeRelationshipLabeler:
         return self.labels.get((premise, hypothesis), self.default)
 
 
-# Starting (p_true_given_parent_true, p_true_given_parent_false) values, in the shape
-# IndependentChildTransition (Phase 0) expects. Meant to be refit against real labelled data
-# later -- these are just enough to get a first end-to-end run working.
-#
-# How each number was chosen (using the label(child, parent) convention above):
-#   EQUIVALENCE:          child and parent share a truth value almost always.
-#   ENTAILMENT:           child => parent. So if parent is FALSE, child MUST be false too
-#                         (contrapositive) -- strong low number. If parent is true, that says
-#                         little about the child on its own -- mild number, just above 0.5.
-#   REVERSE_ENTAILMENT:   parent => child. So if parent is TRUE, child MUST be true too --
-#                         strong high number. If parent is false, that says little about the
-#                         child -- mild number, just below 0.5.
-#   CONTRADICTION:        child and parent (almost) always have opposite truth values.
+# (p_true_given_parent_true, p_true_given_parent_false) per relationship, in the shape
+# IndependentChildTransition (Phase 0) expects. Taken from the official BTProp code
+# (src/hmm.py, get_p_child_state_given_parent_true/false) -- D29. Strict logic, with 0.5
+# wherever the relationship says nothing:
+#   EQUIVALENCE:          same truth value.
+#   ENTAILMENT:           child => parent. Parent false => child false; parent true says nothing.
+#   REVERSE_ENTAILMENT:   parent => child. Parent true => child true; parent false says nothing.
+#   CONTRADICTION:        parent true => child false; parent false says nothing (both can be
+#                         false at once).
 DEFAULT_TRANSITION_PARAMS: dict[Relationship, tuple[float, float]] = {
-    Relationship.EQUIVALENCE: (0.95, 0.05),
-    Relationship.ENTAILMENT: (0.65, 0.05),
-    Relationship.REVERSE_ENTAILMENT: (0.95, 0.35),
-    Relationship.CONTRADICTION: (0.05, 0.95),
+    Relationship.EQUIVALENCE: (1.0, 0.0),
+    Relationship.ENTAILMENT: (0.5, 0.0),
+    Relationship.REVERSE_ENTAILMENT: (1.0, 0.5),
+    Relationship.CONTRADICTION: (0.0, 0.5),
 }

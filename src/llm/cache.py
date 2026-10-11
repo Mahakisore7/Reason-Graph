@@ -62,6 +62,34 @@ class CachingLLMClient:
         )
         return result
 
+    def complete_samples(
+        self, prompt: str, n: int, *, max_tokens: int = 512, temperature: float = 0.7
+    ) -> list[str]:
+        key = _hash_key(self.model_tag, "complete_samples", prompt, n, max_tokens, temperature)
+        path = self.cache_dir / f"{key}.json"
+
+        if path.exists():
+            cached: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+            return [str(s) for s in cached["result"]]
+
+        result = self.inner.complete_samples(
+            prompt, n, max_tokens=max_tokens, temperature=temperature
+        )
+        path.write_text(
+            json.dumps(
+                {
+                    "method": "complete_samples",
+                    "prompt": prompt,
+                    "n": n,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "result": result,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return result
+
     def true_false_confidence(self, statement: str) -> float:
         key = _hash_key(self.model_tag, "true_false_confidence", statement)
         path = self.cache_dir / f"{key}.json"

@@ -65,6 +65,13 @@ class OpenAIClient:
         content: str | None = response.choices[0].message.content
         return content or ""
 
+    def complete_samples(
+        self, prompt: str, n: int, *, max_tokens: int = 512, temperature: float = 0.7
+    ) -> list[str]:
+        return [
+            self.complete(prompt, max_tokens=max_tokens, temperature=temperature) for _ in range(n)
+        ]
+
     def true_false_confidence(self, statement: str) -> float:
         client = self._client()
         prompt = true_false_confidence_prompt(statement)

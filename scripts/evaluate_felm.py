@@ -20,16 +20,25 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sklearn.metrics import roc_auc_score
 
 from scripts.backends import add_backend_args, make_backend
-from scripts.fit_emission_model import bin_index, load_felm_science_split
+from scripts.fit_emission_model import (
+    add_standalone_arg,
+    bin_index,
+    load_felm_science_split,
+    load_standalone,
+    result_name,
+)
 from src.inference.hmt import (
     DecompositionTransition,
+    EmissionModel,
     HiddenMarkovTree,
+    LogisticEmission,
     LookupEmission,
     TreeNode,
     posterior_root_true,
@@ -38,19 +47,62 @@ from src.tree.builder import RawBeliefTree, build_belief_tree
 from src.tree.nli_labeler import CrossEncoderDirectionalNLI, NLIRelationshipLabeler
 from src.tree.relationships import DEFAULT_TRANSITION_PARAMS, Relationship
 
-# One level of children only -- at depth 2, correction alone (question + N*(answer+rewrite))
-# multiplied across every depth-1 child would run into the thousands of calls per statement.
+# One level of children (the paper expands two) -- D16: depth 2 multiplies the LLM calls per
+# statement several times over, beyond one free Kaggle session.
 MAX_DEPTH = 1
-CORRECTION_SAMPLES = 1
+
+# Corrections have confidence fixed at 1.0 and their own emission in the official code
+# (configs/hmm.yaml, perturb_emission_probs, top bucket): 0.8 if true, 0.2 if false. They're
+# marked with a score outside [0, 1] so one emission model can serve the whole tree.
+CORRECTION_SCORE = -1.0
+CORRECTION_EMISSION = {True: 0.8, False: 0.2}
 
 
-def load_emission_model(run_name: str) -> LookupEmission:
+@dataclass(frozen=True)
+class WithCorrectionEmission:
+    base: EmissionModel
+
+    def prob(self, score: float, truth: bool) -> float:
+        if score == CORRECTION_SCORE:
+            return CORRECTION_EMISSION[truth]
+        return self.base.prob(score, truth)
+
+
+@dataclass(frozen=True)
+class Calibration:
+    """One way of turning an LLM confidence into evidence: an emission model, plus how a raw
+    confidence becomes the score that model expects."""
+
+    name: str
+    emission: EmissionModel
+    to_score: Callable[[float], float]
+
+
+def load_calibrations(run_name: str) -> list[Calibration]:
+    """The binned table (the paper's approach) and, if fitted, the smooth logistic curve."""
     path = Path(f"results/emission_model_felm_science_{run_name}.json")
     data = json.loads(path.read_text())
     table: dict[float, dict[bool, float]] = {}
     for bin_str, probs in data["lookup_table"].items():
         table[float(bin_str)] = {True: probs["true"], False: probs["false"]}
-    return LookupEmission(table=table)
+    calibrations = [
+        Calibration("table", LookupEmission(table=table), lambda c: float(bin_index(c)))
+    ]
+    if "logistic" in data:
+        calibrations.append(Calibration("curve", LogisticEmission(**data["logistic"]), lambda c: c))
+    return calibrations
+
+
+def root_only_posterior(confidence: float, calibration: Calibration) -> float:
+    """The calibration on its own, no tree -- isolates what the calibration step does."""
+    node = TreeNode(node_id="root", score=calibration.to_score(confidence))
+    tree = HiddenMarkovTree(
+        nodes={"root": node},
+        root_id="root",
+        emission=calibration.emission,
+        transition=DecompositionTransition(),  # unused: a single node has no children
+    )
+    return posterior_root_true(tree)
 
 
 @dataclass
@@ -81,35 +133,39 @@ class AssembledTransition:
         probability = 1.0
         for child_id, child_truth in zip(child_ids, children_truth, strict=True):
             relationship = self.raw_tree.nodes[child_id].relationship_to_parent
-            if relationship is None:
-                # Correction children aren't NLI-labelled against the parent (see
-                # src/tree/builder.py) -- treat as uninformative about the parent's truth.
-                p_true = 0.5
-            else:
-                p_true_given_true, p_true_given_false = self.relationship_params[relationship]
-                p_true = p_true_given_true if parent_truth else p_true_given_false
+            assert relationship is not None, "every non-root node is NLI-labelled"
+            p_true_given_true, p_true_given_false = self.relationship_params[relationship]
+            p_true = p_true_given_true if parent_truth else p_true_given_false
             probability *= p_true if child_truth else (1.0 - p_true)
         return probability
 
 
-def raw_tree_to_hmt(raw: RawBeliefTree, emission: LookupEmission) -> HiddenMarkovTree:
+def raw_tree_to_hmt(raw: RawBeliefTree, calibration: Calibration) -> HiddenMarkovTree:
     nodes = {
         node_id: TreeNode(
             node_id=node_id,
-            score=float(bin_index(raw_node.confidence)),
+            score=(
+                CORRECTION_SCORE
+                if raw_node.strategy == "correction"
+                else calibration.to_score(raw_node.confidence)
+            ),
             children=tuple(raw_node.children),
         )
         for node_id, raw_node in raw.nodes.items()
     }
     transition = AssembledTransition(raw_tree=raw, relationship_params=DEFAULT_TRANSITION_PARAMS)
     return HiddenMarkovTree(
-        nodes=nodes, root_id=raw.root_id, emission=emission, transition=transition
+        nodes=nodes,
+        root_id=raw.root_id,
+        emission=WithCorrectionEmission(calibration.emission),
+        transition=transition,
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     add_backend_args(parser)
+    add_standalone_arg(parser)
     parser.add_argument(
         "--limit", type=int, default=None, help="only the first N test segments (smoke test)"
     )
@@ -117,10 +173,11 @@ def main() -> None:
     backend = make_backend(args)
     print(f"LLM: {backend.model} ({backend.confidence_method})")
 
-    emission = load_emission_model(backend.run_name)
-    # Test half only -- the emission table was fit on the other half (see
+    name = result_name(args, backend.run_name)
+    calibrations = load_calibrations(name)
+    # Test half only -- calibration was fit on the other half (see
     # scripts/fit_emission_model.py, split_by_response), so nothing here was seen during fitting.
-    _, sample = load_felm_science_split()
+    _, sample = load_felm_science_split(load_standalone(args, backend.run_name))
     if args.limit is not None:
         sample = sample[: args.limit]
     num_false = sum(1 for _, is_true in sample if not is_true)
@@ -129,19 +186,22 @@ def main() -> None:
     llm = backend.cached("felm-eval")
     labeler = NLIRelationshipLabeler(directional=CrossEncoderDirectionalNLI())
 
+    # Every variant is scored on the same statements and all are reported, so no variant is
+    # quietly picked after looking at the test half.
+    variants = ["raw"] + [f"{c.name}_{kind}" for c in calibrations for kind in ("only", "tree")]
     y_true: list[bool] = []
-    tree_scores: list[float] = []
-    raw_scores: list[float] = []
+    scores: dict[str, list[float]] = {v: [] for v in variants}
     predictions: list[dict[str, object]] = []
     skipped = 0
 
     for i, (statement, is_true) in enumerate(sample):
-        raw_tree = build_belief_tree(
-            llm, labeler, statement, max_depth=MAX_DEPTH, correction_samples=CORRECTION_SAMPLES
-        )
+        raw_tree = build_belief_tree(llm, labeler, statement, max_depth=MAX_DEPTH)
         root_confidence = raw_tree.nodes[raw_tree.root_id].confidence
+        row = {"raw": root_confidence}
         try:
-            posterior = posterior_root_true(raw_tree_to_hmt(raw_tree, emission))
+            for c in calibrations:
+                row[f"{c.name}_only"] = root_only_posterior(root_confidence, c)
+                row[f"{c.name}_tree"] = posterior_root_true(raw_tree_to_hmt(raw_tree, c))
         except ValueError:
             # Degenerate tree (both truth values had zero likelihood) -- skip rather than
             # crash the whole run over one statement.
@@ -149,38 +209,30 @@ def main() -> None:
             continue
 
         y_true.append(is_true)
-        tree_scores.append(posterior)
-        raw_scores.append(root_confidence)
+        for v in variants:
+            scores[v].append(row[v])
         predictions.append(
-            {
-                "statement": statement,
-                "label": is_true,
-                "raw_confidence": root_confidence,
-                "tree_posterior": posterior,
-                "tree_size": len(raw_tree.nodes),
-            }
+            {"statement": statement, "label": is_true, "tree_size": len(raw_tree.nodes), **row}
         )
         print(
             f"  {i + 1}/{len(sample)}: label={is_true} "
-            f"raw={root_confidence:.2f} tree_posterior={posterior:.3f}"
+            + " ".join(f"{v}={row[v]:.3f}" for v in variants)
         )
 
     if skipped:
         print(f"Skipped {skipped} degenerate tree(s).")
 
-    raw_auroc: float | None = None
-    tree_auroc: float | None = None
+    auroc: dict[str, float | None] = dict.fromkeys(variants)
     if len(set(y_true)) < 2:
         # AUROC compares true vs. false examples -- undefined if only one kind was scored
         # (happens on small --limit smoke tests).
         print("AUROC not computed: need both true and false segments in the sample.")
     else:
-        raw_auroc = float(roc_auc_score(y_true, raw_scores))
-        tree_auroc = float(roc_auc_score(y_true, tree_scores))
-        print(f"Raw single-shot confidence AUROC: {raw_auroc:.4f}")
-        print(f"Belief-tree posterior AUROC:      {tree_auroc:.4f}")
+        for v in variants:
+            auroc[v] = float(roc_auc_score(y_true, scores[v]))
+            print(f"AUROC {v:<12} {auroc[v]:.4f}")
 
-    out_path = Path(f"results/felm_science_auroc_{backend.run_name}.json")
+    out_path = Path(f"results/felm_science_auroc_{name}.json")
     out_path.write_text(
         json.dumps(
             {
@@ -189,8 +241,9 @@ def main() -> None:
                 "sample_size": len(y_true),
                 "skipped": skipped,
                 "max_depth": MAX_DEPTH,
-                "raw_confidence_auroc": raw_auroc,
-                "belief_tree_auroc": tree_auroc,
+                "standalone_rewrites": bool(args.standalone),
+                # raw = LLM confidence; *_only = calibration alone; *_tree = calibration + tree
+                "auroc": auroc,
                 # Per-statement scores, for plots and error analysis later.
                 "predictions": predictions,
             },

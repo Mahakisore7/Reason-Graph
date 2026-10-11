@@ -216,6 +216,39 @@ children only.)
   Llama scores were adding little anyway (matches 3c: tree ≈ raw).
 - Only confidence calls are saved; generating premises and corrections still costs LLM calls.
 
+## 3f. All metrics, and the graph with better links (D35, D36)
+
+304 test sentences, 49 false, 61 answers. Positive class = false. Random guessing gives
+AUC-PR 0.161.
+
+| Variant | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| Llama raw confidence | 0.745 | 0.329 | 0.371 |
+| Paper's tree (curve) | 0.741 | 0.403 | 0.439 |
+| Graph, all links (curve) | 0.727 | 0.429 | 0.420 |
+| **Graph, no contradiction links (curve)** | **0.773** | **0.475** | 0.438 |
+| Paper's tree (table) | 0.678 | 0.362 | 0.393 |
+| Graph, no contradiction links (table) | 0.744 | 0.413 | **0.483** |
+
+The rule was chosen on the fit half (D35); 72 links on the test half, all 122 loopy-BP runs
+converged (10 graphs had loops).
+
+**How sure (cluster bootstrap, 2,000 resamples of whole answers):**
+
+| Comparison | Difference | 95% range | Share of resamples above 0 |
+|---|---|---|---|
+| Graph vs tree, AUROC | +0.029 | −0.014 to +0.075 | 89% |
+| Graph vs raw, AUROC | +0.023 | −0.047 to +0.092 | 74% |
+| Graph vs tree, AUC-PR | +0.063 | −0.044 to +0.197 | 81% |
+| Graph vs raw, AUC-PR | +0.131 | −0.021 to +0.275 | 95% |
+| Tree vs raw, AUC-PR | +0.068 | −0.038 to +0.187 | 89% |
+
+**What this shows:** with contradiction links removed, our answer-level graph is the best
+variant on every metric with the curve calibration. The gains point the same way throughout
+but only "graph vs raw, AUC-PR" reaches the usual 95% bar, and only just — 49 false sentences
+is a small test. Honest summary for the mentor: *a consistent improvement, suggestive but not
+yet proven on this one dataset.*
+
 ## 4. Known weaknesses of these numbers
 
 1. **Typed-out confidence, not logprobs.** Fixed by the Llama-3-8B run on Kaggle (D22).

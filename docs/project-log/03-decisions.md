@@ -276,3 +276,23 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   call.
 - *Limit, stated plainly:* only the confidence calls are saved. Generating premises and
   corrections still needs the LLM, so the saving is a share of confidence calls, not of all calls.
+
+## Phase 7 — evaluation
+
+**D35. Which links between sentences to keep — chosen on the fit half.**
+- *Problem found (results 3d):* 96 of 168 cross links were "contradiction", mostly two different
+  facts about one topic. They pushed true sentences down.
+- *Three rules:* `any` (the paper's labeller), `strict` (contradiction only if NLI says so in
+  both directions), `no_contradiction` (drop contradiction links, keep entailment-type links).
+- *Chosen without the test half:* each rule scored on the fit half (one node per sentence with
+  its Llama confidence, linked under the rule; no new LLM calls). Fit-half AUROC: none 0.724,
+  any 0.699, strict 0.727, **no_contradiction 0.736** → chosen, then run once on the test half.
+- *Cost of the choice:* contradictions between sentences are no longer used at all; a real one
+  ("…in Berlin" / "…in Paris") is now missed. A better contradiction detector could bring them back.
+
+**D36. AUC-PR and F1, as the paper reports.**
+- Positive class = false statement (a hallucination); hallucination score = 1 − P(true).
+- F1 needs a cut-off. It is cross-fitted: answers split into 5 groups, each group classified with
+  the cut-off that maximises F1 on the other 4. No sentence helps choose its own cut-off.
+- Significance by *cluster* bootstrap: whole answers resampled (sentences of one answer are not
+  independent), 2,000 times.

@@ -42,7 +42,11 @@ from scripts.fit_emission_model import (
 from src.inference.hmt import posterior_root_true
 from src.inference.loopy import FactorGraph, add_tree, pairwise_factor, run_loopy_bp
 from src.tree.builder import RawBeliefTree, build_belief_tree
-from src.tree.nli_labeler import CrossEncoderDirectionalNLI, NLIRelationshipLabeler
+from src.tree.nli_labeler import (
+    CrossEncoderDirectionalNLI,
+    DirectionalNLI,
+    NLIRelationshipLabeler,
+)
 from src.tree.relationships import DEFAULT_TRANSITION_PARAMS, Relationship, RelationshipLabeler
 
 LINK_EPS = 0.05  # cross-link probabilities are kept inside [LINK_EPS, 1 - LINK_EPS]
@@ -60,6 +64,34 @@ class CrossLink:
 
 def soften(p: float) -> float:
     return min(max(p, LINK_EPS), 1 - LINK_EPS)
+
+
+LINK_RULES = ("any", "strict", "no_contradiction")
+
+
+@dataclass
+class RuleLabeler:
+    """Which NLI answers count as a cross link (D35). The tree links always use the paper's
+    labeller; only links BETWEEN sentences go through a rule:
+        any               -- the paper's labeller: contradiction if either direction says so;
+        strict            -- contradiction only if BOTH directions say so (one-sided calls were
+                             mostly two different facts on one topic);
+        no_contradiction  -- contradiction links dropped, entailment-type links kept.
+    """
+
+    directional: DirectionalNLI
+    rule: str = "any"
+
+    def label(self, premise: str, hypothesis: str) -> Relationship:
+        base = NLIRelationshipLabeler(self.directional).label(premise, hypothesis)
+        if base is not Relationship.CONTRADICTION or self.rule == "any":
+            return base
+        if self.rule == "no_contradiction":
+            return Relationship.NEUTRAL
+        forward = self.directional.label_direction(premise, hypothesis)
+        backward = self.directional.label_direction(hypothesis, premise)
+        both = forward == "contradiction" and backward == "contradiction"
+        return Relationship.CONTRADICTION if both else Relationship.NEUTRAL
 
 
 def label_cross_links(statements: list[str], labeler: RelationshipLabeler) -> list[CrossLink]:
@@ -109,6 +141,7 @@ def main() -> None:
     add_backend_args(parser)
     add_standalone_arg(parser)
     parser.add_argument("--limit", type=int, default=None, help="only the first N test answers")
+    parser.add_argument("--link-rule", choices=LINK_RULES, default="any")
     args = parser.parse_args()
     backend = make_backend(args)
     print(f"LLM: {backend.model} ({backend.confidence_method})")
@@ -120,7 +153,10 @@ def main() -> None:
     print(f"{len(answers)} test answers, {sum(len(a) for a in answers)} sentences.")
 
     llm = backend.cached("felm-eval")
-    labeler = NLIRelationshipLabeler(directional=CrossEncoderDirectionalNLI())
+    nli = CrossEncoderDirectionalNLI()
+    labeler = NLIRelationshipLabeler(directional=nli)
+    link_labeler = RuleLabeler(nli, args.link_rule)
+    print(f"cross-link rule: {args.link_rule}")
 
     variants = [f"{c.name}_{kind}" for c in calibrations for kind in ("tree", "graph")]
     y_true: list[bool] = []
@@ -135,7 +171,7 @@ def main() -> None:
     for a, answer in enumerate(answers):
         statements = [s for s, _ in answer]
         trees = [build_belief_tree(llm, labeler, s, max_depth=MAX_DEPTH) for s in statements]
-        links = label_cross_links(statements, labeler)
+        links = label_cross_links(statements, link_labeler)
         row: dict[str, list[float]] = {}
         try:
             for c in calibrations:
@@ -202,7 +238,8 @@ def main() -> None:
     }
     print(f"{num_links} cross links; convergence: {convergence}")
 
-    out_path = Path(f"results/felm_science_graph_{name}.json")
+    suffix = "" if args.link_rule == "any" else f"-{args.link_rule}"
+    out_path = Path(f"results/felm_science_graph_{name}{suffix}.json")
     out_path.write_text(
         json.dumps(
             {
@@ -211,6 +248,7 @@ def main() -> None:
                 "num_sentences": len(y_true),
                 "num_cross_links": num_links,
                 "settings": {
+                    "link_rule": args.link_rule,
                     "link_eps": LINK_EPS,
                     "max_iterations": MAX_ITERATIONS,
                     "convergence_tol": CONVERGENCE_TOL,

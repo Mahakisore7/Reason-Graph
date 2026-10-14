@@ -470,6 +470,19 @@ brute-force answer on a looped graph, and — as expected — not exact.
 | Surrogate | 0.247 | 0.276 | 0.230 |
 | Always predict the average | 0.258 | 0.281 | 0.244 |
 
+### 6.7 Loopy BP versus exact inference as loops increase
+
+![Loopiness study](docs/figures/loopiness_study.png)
+
+Synthetic study (`scripts/loopiness_study.py`, decision D37): 200 random 10-node graphs per
+setting — a random spanning tree plus 0–10 extra edges — with exact marginals by brute force.
+Loopy BP is exact on trees; its mean error rises with loops (mixed links: 0.023 at one cycle,
+0.094 at three, 0.148 at ten; all-strong links: 0.096, 0.159, 0.193) with worst single errors up
+to 0.85. Convergence was at least 99.5% undamped; damping 0.5 did not help (at least 97%, about
+twice the rounds). On our real answer graphs, 26 of the 31 linked test answers are loop-free
+(where BP is exact) and 5 contain a cycle, so the gain in §6.2 comes mostly from linking
+sentences; the loopy part would matter more on denser graphs.
+
 ---
 
 ## 7. Discussion
@@ -521,7 +534,7 @@ Python 3.13 and [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/Mahakisore7/Reason-Graph.git && cd Reason-Graph
 uv sync                 # dependencies into .venv
-uv run pytest           # 75 tests; no GPU, model download or API key needed
+uv run pytest           # 77 tests; no GPU, model download or API key needed
 ```
 
 Optional GPU on a laptop: `uv sync` installs CPU PyTorch. For an NVIDIA GPU (NLI becomes minutes
@@ -620,10 +633,10 @@ Reason-Graph/
 ├── scripts/          backends.py · decontextualize_felm.py · fit_emission_model.py
 │                     evaluate_felm.py · evaluate_graph.py · choose_link_rule.py
 │                     evaluate_surrogate.py · report_metrics.py · make_figures.py · verify.py
-├── tests/            75 tests (one module per component)
+├── tests/            77 tests (one module per component)
 ├── notebooks/        kaggle_felm_llama3.ipynb
 ├── docs/
-│   ├── project-log/  plain-language record: big picture, what we built, decisions D1–D36,
+│   ├── project-log/  plain-language record: big picture, what we built, decisions D1–D37,
 │   │                 dataset, results, glossary, Kaggle guide
 │   ├── phases/       original phase-by-phase plan
 │   └── figures/      all figures in this README
@@ -641,7 +654,7 @@ New to the project? Read [docs/project-log/README.md](docs/project-log/README.md
 
 | Practice | Detail |
 |---|---|
-| Tests | 75, all passing. Probability code checked against **hand-computed** values and **brute-force** enumeration, not just "it runs" |
+| Tests | 77, all passing. Probability code checked against **hand-computed** values and **brute-force** enumeration, not just "it runs" |
 | Exact BP | Phase-0 checkpoints computed on paper (e.g. two-child tree: 0.8209483368719038) |
 | Loopy BP | equals exact BP on trees (independent-children and decomposition) to 1e-12; within 0.05 of brute force on a cycle and deliberately *not* exact; 0 rounds ⇒ "not converged" |
 | Pipeline | decomposition tree = the same tree built by hand; premise + correction tree = brute force over all 8 truth combinations (catches a child using the wrong relationship) |

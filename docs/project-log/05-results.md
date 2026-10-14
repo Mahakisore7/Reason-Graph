@@ -249,6 +249,26 @@ but only "graph vs raw, AUC-PR" reaches the usual 95% bar, and only just — 49 
 is a small test. Honest summary for the mentor: *a consistent improvement, suggestive but not
 yet proven on this one dataset.*
 
+## 3g. Loopy BP versus exact inference as loops increase (D37)
+
+Synthetic study, 200 random 10-node graphs per setting, exact answer by brute force over all
+1,024 assignments. Cycles = extra edges beyond a spanning tree.
+
+| Cycles | Mean error, mixed links | Mean error, strong links | Converged (no damping) |
+|---|---|---|---|
+| 0 (tree) | 0.000 | 0.000 | 100% |
+| 1 | 0.023 | 0.096 | 100% |
+| 3 | 0.094 | 0.159 | 99.5% / 100% |
+| 6 | 0.125 | 0.171 | 100% |
+| 10 | 0.148 | 0.193 | 100% |
+
+**What this shows:** loopy BP is exact on trees and its error grows steadily with the number of
+loops; the worst single marginal was off by 0.85. Convergence was never the problem (at least
+99.5% undamped; damping 0.5 was no better, at least 97%, and took about twice as many rounds).
+On our real data, 26 of the 31 linked test answers are loop-free (exact) and 5 have cycles, so
+the answer-graph gain in 3f comes mostly from linking sentences; the loopy part is needed for
+the minority with cycles and its approximation error would matter on denser graphs.
+
 ## 4. Known weaknesses of these numbers
 
 1. **Typed-out confidence, not logprobs.** Fixed by the Llama-3-8B run on Kaggle (D22).

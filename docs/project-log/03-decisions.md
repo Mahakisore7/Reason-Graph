@@ -296,3 +296,20 @@ enough to afford. Details in [04-dataset-felm-science.md](04-dataset-felm-scienc
   the cut-off that maximises F1 on the other 4. No sentence helps choose its own cut-off.
 - Significance by *cluster* bootstrap: whole answers resampled (sentences of one answer are not
   independent), 2,000 times.
+
+**D37. Study of loopy BP against exact inference as loops increase (mentor feedback).**
+- *Why:* the Review 1 plan promised, "per mentor feedback", a comparison of exact inference with
+  loopy BP on graphs of increasing loopiness. Until now we had one small looped graph checked
+  against brute force, plus convergence on real graphs.
+- *Design:* random 10-node binary graphs = a random spanning tree plus 0, 1, 2, 3, 4, 6, 8 or 10
+  extra edges (the number of independent cycles). 200 graphs per setting, two coupling regimes
+  (mixed link types like our real graphs; all strong equivalence links, the hard case), with and
+  without damping. Exact marginals by brute force over all 2^10 assignments.
+- *Result:* exact on trees (error 0); mean error of P(true) rises with loops — mixed 0.023 at
+  1 cycle, 0.094 at 3, 0.148 at 10; strong 0.096 at 1, 0.159 at 3, 0.193 at 10; worst single
+  error up to 0.85. Convergence at least 99.5% undamped. Damping 0.5 did not help (at least 97%,
+  about twice the rounds), so it is a safe but unnecessary choice; every real run converged.
+- *What it means for our results:* of the 31 test answers that got any cross link, 26 are
+  loop-free, where BP is exact; only 5 contain a cycle. Our graph gains therefore come mostly from
+  linking sentences, not from the loopy part — loopy BP matters for the minority with cycles, and
+  would matter more on denser graphs, where this study shows its error is large.

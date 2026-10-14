@@ -222,6 +222,30 @@ def main() -> None:
     )
     save(fig, "convergence.png")
 
+    # 8. Loopy BP vs. exact inference as the number of loops grows (synthetic study).
+    study = load("results/loopiness_study.json")["rows"]
+    fig, (e1, e2) = plt.subplots(1, 2, figsize=(10, 4))
+    for regime, color, label in (
+        ("mixed", COLOR["tree"], "Mixed link types (like our real graphs)"),
+        ("strong", COLOR["graph"], "All strong equivalence links (hard case)"),
+    ):
+        sel = [r for r in study if r["regime"] == regime and r["damping"] == 0.0]
+        cycles = [r["extra_edges"] for r in sel]
+        e1.plot(
+            cycles, [r["mean_abs_error"] for r in sel], color=color, lw=2, marker="o", label=label
+        )
+        e2.plot(cycles, [100 * r["converged_share"] for r in sel], color=color, lw=2, marker="o")
+    e1.set(
+        xlabel="Independent cycles in the graph", ylabel="Mean |loopy BP − exact| of P(true)",
+        title="Error grows with loops; zero on trees",
+    )  # fmt: skip
+    e1.legend(fontsize=9, loc="upper left")
+    e2.set(
+        xlabel="Independent cycles in the graph", ylabel="Runs that converged (%)",
+        ylim=(90, 101), title="Convergence (no damping, ≤ 200 rounds)",
+    )  # fmt: skip
+    save(fig, "loopiness_study.png")
+
 
 if __name__ == "__main__":
     main()

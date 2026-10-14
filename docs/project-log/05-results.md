@@ -159,10 +159,11 @@ safety check (original kept). Examples:
   real difference. With the table, the tree adds +0.04 (range −0.04 to +0.13), also not
   significant.
 - 50 sentences got no children (nothing checkable to expand); 254 got a tree.
-- The paper reports BTProp beating the *best baseline* by about 3–9% on FELM-Science. Likely
-  reasons we see no gain: trees of depth 1, not 2 (D16, free-GPU time limit); the paper's
-  hand-cleaned dataset (not public); one test set of 49 false sentences, so differences under
-  ~0.05 cannot be told apart from chance.
+- Against the paper's own Llama-3 numbers (table in "Comparison with the paper" at the end of
+  this file), the *pattern* reproduces: AUROC about flat, AUC-PR and F1 clearly up. Remaining
+  absolute gap: depth 1 (D16), automatic instead of hand-cleaned data, a stricter cross-fitted F1,
+  and one test set of 49 false sentences, so differences under ~0.05 cannot be told apart from
+  chance.
 
 ## 3d. Our extension 1 — one graph per answer, loopy BP (D32, D33)
 
@@ -249,6 +250,26 @@ but only "graph vs raw, AUC-PR" reaches the usual 95% bar, and only just — 49 
 is a small test. Honest summary for the mentor: *a consistent improvement, suggestive but not
 yet proven on this one dataset.*
 
+## 3g. Loopy BP versus exact inference as loops increase (D37)
+
+Synthetic study, 200 random 10-node graphs per setting, exact answer by brute force over all
+1,024 assignments. Cycles = extra edges beyond a spanning tree.
+
+| Cycles | Mean error, mixed links | Mean error, strong links | Converged (no damping) |
+|---|---|---|---|
+| 0 (tree) | 0.000 | 0.000 | 100% |
+| 1 | 0.023 | 0.096 | 100% |
+| 3 | 0.094 | 0.159 | 99.5% / 100% |
+| 6 | 0.125 | 0.171 | 100% |
+| 10 | 0.148 | 0.193 | 100% |
+
+**What this shows:** loopy BP is exact on trees and its error grows steadily with the number of
+loops; the worst single marginal was off by 0.85. Convergence was never the problem (at least
+99.5% undamped; damping 0.5 was no better, at least 97%, and took about twice as many rounds).
+On our real data, 26 of the 31 linked test answers are loop-free (exact) and 5 have cycles, so
+the answer-graph gain in 3f comes mostly from linking sentences; the loopy part is needed for
+the minority with cycles and its approximation error would matter on denser graphs.
+
 ## 4. Known weaknesses of these numbers
 
 1. **Typed-out confidence, not logprobs.** Fixed by the Llama-3-8B run on Kaggle (D22).
@@ -260,6 +281,27 @@ yet proven on this one dataset.*
 
 ## Comparison with the paper
 
-Same model (Llama-3-8B-Instruct), same confidence method, the paper's prompts. Differences that
-remain: tree depth 1 vs. 2, our automatic stand-alone rewriting vs. their hand-cleaned file. Our
-result: the tree method matches raw confidence (0.741 vs. 0.745) instead of beating it — see 3c.
+| FELM-Science, Llama-3-8B-Instruct | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| **Paper** (Table 3): Prior confidence | 76.1 | 38.2 | 44.0 |
+| Paper: SelfCheckGPT (best baseline on AUROC) | 77.8 | 39.5 | 49.1 |
+| Paper: **BTProp** (depth 2) | **77.8** | **48.2** | **51.3** |
+| **Ours**: raw confidence | 74.5 | 32.9 | 37.1 |
+| Ours: BTProp reproduction (depth 1) | 74.1 | 40.3 | 43.9 |
+| Ours: answer graph (extension 1) | 77.3 | 47.5 | 43.8 |
+
+| Gain over plain confidence | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| Paper: BTProp | +1.7 | +10.0 | +7.3 |
+| Ours: BTProp reproduction | −0.4 | +7.4 | +6.8 |
+| Ours: answer graph | +2.8 | +14.6 | +6.7 |
+
+The *pattern* of the paper's gain reproduces: BTProp barely moves AUROC (+1.7 in the paper, −0.4
+here) but clearly improves AUC-PR and F1 (+10.0 / +7.3 in the paper; +7.4 / +6.8 here). Absolute
+numbers are not directly comparable: the paper uses its full hand-cleaned FELM-Science file and
+depth-2 trees; we use our cleaned version's 304-sentence test half, depth 1, and a cross-fitted F1
+cut-off (the paper searches for the F1-optimal threshold on the same data, which is more
+favourable). Our answer graph reaches AUROC and AUC-PR within about one point of the paper's
+BTProp, but that is a different test set, not a like-for-like win. The "3–9% over the best
+baseline" in the paper is an average over datasets and backbones; on Llama-3 and FELM-Science its
+AUROC equals SelfCheckGPT's (77.8).

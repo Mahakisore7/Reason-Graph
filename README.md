@@ -417,6 +417,33 @@ raw on ranking metrics; it matters once evidence is combined.
 The graph's advantage is concentrated at the top of the ranking: at low recall it finds false
 sentences with clearly higher precision (right panel).
 
+### Comparison with the paper (Table 3 of Hou et al.)
+
+| FELM-Science, Llama-3-8B-Instruct | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| **Paper** (Table 3): Prior confidence | 76.1 | 38.2 | 44.0 |
+| Paper: SelfCheckGPT (best baseline on AUROC) | 77.8 | 39.5 | 49.1 |
+| Paper: **BTProp** (depth 2) | **77.8** | **48.2** | **51.3** |
+| **Ours**: raw confidence | 74.5 | 32.9 | 37.1 |
+| Ours: BTProp reproduction (depth 1) | 74.1 | 40.3 | 43.9 |
+| Ours: answer graph (extension 1) | 77.3 | 47.5 | 43.8 |
+
+| Gain over plain confidence | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| Paper: BTProp | +1.7 | +10.0 | +7.3 |
+| Ours: BTProp reproduction | −0.4 | +7.4 | +6.8 |
+| Ours: answer graph | +2.8 | +14.6 | +6.7 |
+
+The *pattern* of the paper's gain reproduces: BTProp barely moves AUROC (+1.7 in the paper, −0.4
+here) but clearly improves AUC-PR and F1 (+10.0 / +7.3 in the paper; +7.4 / +6.8 here). Absolute
+numbers are not directly comparable: the paper uses its full hand-cleaned FELM-Science file and
+depth-2 trees; we use our cleaned version's 304-sentence test half, depth 1, and a cross-fitted F1
+cut-off (the paper searches for the F1-optimal threshold on the same data, which is more
+favourable). Our answer graph reaches AUROC and AUC-PR within about one point of the paper's
+BTProp, but that is a different test set, not a like-for-like win. The "3–9% over the best
+baseline" in the paper is an average over datasets and backbones; on Llama-3 and FELM-Science its
+AUROC equals SelfCheckGPT's (77.8).
+
 ### 6.3 How sure we are (cluster bootstrap, 2,000 resamples of whole answers)
 
 | Comparison | Metric | Mean difference | 95% interval | Resamples > 0 |
@@ -470,14 +497,28 @@ brute-force answer on a looped graph, and — as expected — not exact.
 | Surrogate | 0.247 | 0.276 | 0.230 |
 | Always predict the average | 0.258 | 0.281 | 0.244 |
 
+### 6.7 Loopy BP versus exact inference as loops increase
+
+![Loopiness study](docs/figures/loopiness_study.png)
+
+Synthetic study (`scripts/loopiness_study.py`, decision D37): 200 random 10-node graphs per
+setting — a random spanning tree plus 0–10 extra edges — with exact marginals by brute force.
+Loopy BP is exact on trees; its mean error rises with loops (mixed links: 0.023 at one cycle,
+0.094 at three, 0.148 at ten; all-strong links: 0.096, 0.159, 0.193) with worst single errors up
+to 0.85. Convergence was at least 99.5% undamped; damping 0.5 did not help (at least 97%, about
+twice the rounds). On our real answer graphs, 26 of the 31 linked test answers are loop-free
+(where BP is exact) and 5 contain a cycle, so the gain in §6.2 comes mostly from linking
+sentences; the loopy part would matter more on denser graphs.
+
 ---
 
 ## 7. Discussion
 
-- **Reproduction.** With the paper's prompts and stand-alone sentences, the BTProp tree matches
-  raw confidence on AUROC and improves AUC-PR and F1 (not significant). It does not reproduce the
-  paper's reported 3–9% gain over the best baseline. Most likely causes: depth 1 instead of 2,
-  an automatic instead of a hand-cleaned dataset, and a small test set.
+- **Reproduction.** With the paper's prompts and stand-alone sentences, our BTProp tree matches
+  raw confidence on AUROC (as in the paper, +1.7 there) and improves AUC-PR and F1 by about the
+  same amount the paper reports (+7.4 / +6.8 here against +10.0 / +7.3); see the comparison
+  table in §6.2. The remaining absolute gap is most likely depth 1 instead of 2, an automatic
+  instead of a hand-cleaned dataset, a stricter cross-fitted F1, and a small test set.
 - **The biggest single fix was data, not modelling.** Making sentences stand alone raised raw
   AUROC from 0.670 to 0.745; context-dependent "They / This…" sentences had scored 0.40.
 - **Answer graphs help, once the links are right.** All NLI links together hurt (0.727), because
@@ -521,7 +562,7 @@ Python 3.13 and [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/Mahakisore7/Reason-Graph.git && cd Reason-Graph
 uv sync                 # dependencies into .venv
-uv run pytest           # 75 tests; no GPU, model download or API key needed
+uv run pytest           # 77 tests; no GPU, model download or API key needed
 ```
 
 Optional GPU on a laptop: `uv sync` installs CPU PyTorch. For an NVIDIA GPU (NLI becomes minutes
@@ -620,10 +661,10 @@ Reason-Graph/
 ├── scripts/          backends.py · decontextualize_felm.py · fit_emission_model.py
 │                     evaluate_felm.py · evaluate_graph.py · choose_link_rule.py
 │                     evaluate_surrogate.py · report_metrics.py · make_figures.py · verify.py
-├── tests/            75 tests (one module per component)
+├── tests/            77 tests (one module per component)
 ├── notebooks/        kaggle_felm_llama3.ipynb
 ├── docs/
-│   ├── project-log/  plain-language record: big picture, what we built, decisions D1–D36,
+│   ├── project-log/  plain-language record: big picture, what we built, decisions D1–D37,
 │   │                 dataset, results, glossary, Kaggle guide
 │   ├── phases/       original phase-by-phase plan
 │   └── figures/      all figures in this README
@@ -641,7 +682,7 @@ New to the project? Read [docs/project-log/README.md](docs/project-log/README.md
 
 | Practice | Detail |
 |---|---|
-| Tests | 75, all passing. Probability code checked against **hand-computed** values and **brute-force** enumeration, not just "it runs" |
+| Tests | 77, all passing. Probability code checked against **hand-computed** values and **brute-force** enumeration, not just "it runs" |
 | Exact BP | Phase-0 checkpoints computed on paper (e.g. two-child tree: 0.8209483368719038) |
 | Loopy BP | equals exact BP on trees (independent-children and decomposition) to 1e-12; within 0.05 of brute force on a cycle and deliberately *not* exact; 0 rounds ⇒ "not converged" |
 | Pipeline | decomposition tree = the same tree built by hand; premise + correction tree = brute force over all 8 truth combinations (catches a child using the wrong relationship) |

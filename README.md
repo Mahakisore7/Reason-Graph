@@ -417,6 +417,33 @@ raw on ranking metrics; it matters once evidence is combined.
 The graph's advantage is concentrated at the top of the ranking: at low recall it finds false
 sentences with clearly higher precision (right panel).
 
+### Comparison with the paper (Table 3 of Hou et al.)
+
+| FELM-Science, Llama-3-8B-Instruct | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| **Paper** (Table 3): Prior confidence | 76.1 | 38.2 | 44.0 |
+| Paper: SelfCheckGPT (best baseline on AUROC) | 77.8 | 39.5 | 49.1 |
+| Paper: **BTProp** (depth 2) | **77.8** | **48.2** | **51.3** |
+| **Ours**: raw confidence | 74.5 | 32.9 | 37.1 |
+| Ours: BTProp reproduction (depth 1) | 74.1 | 40.3 | 43.9 |
+| Ours: answer graph (extension 1) | 77.3 | 47.5 | 43.8 |
+
+| Gain over plain confidence | AUROC | AUC-PR | F1 |
+|---|---|---|---|
+| Paper: BTProp | +1.7 | +10.0 | +7.3 |
+| Ours: BTProp reproduction | −0.4 | +7.4 | +6.8 |
+| Ours: answer graph | +2.8 | +14.6 | +6.7 |
+
+The *pattern* of the paper's gain reproduces: BTProp barely moves AUROC (+1.7 in the paper, −0.4
+here) but clearly improves AUC-PR and F1 (+10.0 / +7.3 in the paper; +7.4 / +6.8 here). Absolute
+numbers are not directly comparable: the paper uses its full hand-cleaned FELM-Science file and
+depth-2 trees; we use our cleaned version's 304-sentence test half, depth 1, and a cross-fitted F1
+cut-off (the paper searches for the F1-optimal threshold on the same data, which is more
+favourable). Our answer graph reaches AUROC and AUC-PR within about one point of the paper's
+BTProp, but that is a different test set, not a like-for-like win. The "3–9% over the best
+baseline" in the paper is an average over datasets and backbones; on Llama-3 and FELM-Science its
+AUROC equals SelfCheckGPT's (77.8).
+
 ### 6.3 How sure we are (cluster bootstrap, 2,000 resamples of whole answers)
 
 | Comparison | Metric | Mean difference | 95% interval | Resamples > 0 |
@@ -487,10 +514,11 @@ sentences; the loopy part would matter more on denser graphs.
 
 ## 7. Discussion
 
-- **Reproduction.** With the paper's prompts and stand-alone sentences, the BTProp tree matches
-  raw confidence on AUROC and improves AUC-PR and F1 (not significant). It does not reproduce the
-  paper's reported 3–9% gain over the best baseline. Most likely causes: depth 1 instead of 2,
-  an automatic instead of a hand-cleaned dataset, and a small test set.
+- **Reproduction.** With the paper's prompts and stand-alone sentences, our BTProp tree matches
+  raw confidence on AUROC (as in the paper, +1.7 there) and improves AUC-PR and F1 by about the
+  same amount the paper reports (+7.4 / +6.8 here against +10.0 / +7.3); see the comparison
+  table in §6.2. The remaining absolute gap is most likely depth 1 instead of 2, an automatic
+  instead of a hand-cleaned dataset, a stricter cross-fitted F1, and a small test set.
 - **The biggest single fix was data, not modelling.** Making sentences stand alone raised raw
   AUROC from 0.670 to 0.745; context-dependent "They / This…" sentences had scored 0.40.
 - **Answer graphs help, once the links are right.** All NLI links together hurt (0.727), because

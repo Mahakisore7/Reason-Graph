@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Full Pipeline: Hallucination Detection on FELM-Science</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1d1b;--mut:#6b6a64;--card:#fff;--bd:#e3e0d8;--ac:#1f5fd1;--eq:#f1efe8;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141412;--fg:#ecebe6;--mut:#a3a29a;--card:#1c1c19;--bd:#34332e;--ac:#7aa7ff;--eq:#23231f}}
+:root[data-theme="dark"]{--bg:#141412;--fg:#ecebe6;--mut:#a3a29a;--card:#1c1c19;--bd:#34332e;--ac:#7aa7ff;--eq:#23231f}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:820px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:28px;margin:8px 0}.sub{color:var(--mut);margin:0 0 14px}
+#toc{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 24px}
+#toc a{min-width:30px;text-align:center;padding:3px 7px;border:1px solid var(--bd);border-radius:6px;color:var(--ac);text-decoration:none;font-size:13px;background:var(--card)}
+.stage{margin:34px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ac);font-weight:700}
+section{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:6px 18px 14px;margin:12px 0}
+h2{font-size:19px;margin:14px 0 8px}h2 b{display:inline-block;background:var(--ac);color:var(--bg);border-radius:6px;padding:0 8px;margin-right:8px;font-size:15px}
+p{margin:8px 0}ul,ol{margin:6px 0;padding-left:22px}
+.eq{background:var(--eq);border-radius:8px;padding:10px 14px;margin:10px 0;font:15px/1.7 "Cambria Math",Cambria,Georgia,serif;overflow-x:auto;white-space:pre}
+.code{background:var(--eq);border-radius:8px;padding:10px 14px;margin:10px 0;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;overflow-x:auto;white-space:pre}
+.q{border-left:3px solid var(--bd);padding:2px 12px;margin:8px 0;color:var(--mut);font-style:italic}
+.key{border:1px solid var(--ac);border-radius:8px;padding:8px 14px;margin:10px 0;font-weight:600}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--bd)}th{color:var(--mut)}
+@media print{#toc{display:none}section{break-inside:avoid}}
+</style></head><body><main>
+<h1>Full Pipeline</h1>
+<p class="sub">Hallucination detection on FELM-Science: LLM confidence + Hidden Markov Tree + answer-level loopy belief propagation</p>
+<div id="toc"></div>
+
+<div class="stage">Task and data</div>
+<section><h2><b>1</b>Start with the actual task</h2>
+<p>The input is an LLM-generated answer from <b>FELM-Science</b>. Conceptually:</p>
+<div class="code">Question:
+Where is the Eiffel Tower located?
+
+Generated answer:
+“The Eiffel Tower was completed in 1889.
+ It is located in Berlin.
+ It is one of France’s most famous landmarks.”</div>
+<p>The dataset gives us sentence-level factual labels. Our job is:</p>
+<div class="key">Determine which generated statements are hallucinated</div>
+<p>We don’t simply classify the entire answer as <code>True / False</code>. We want a probability for each statement:</p>
+<div class="eq">P(Z_i = T)        where   Z_i = T  if statement is factual
+                          Z_i = F  if statement is hallucinated</div></section>
+
+<section><h2><b>2</b>First stage: dataset loading</h2>
+<p>The project uses the FELM Science data. Raw file: <code>data/felm/all.jsonl</code>. The project performs cleaning and constructs the Science subset. Final split used in the experiment:</p>
+<div class="tw"><table><tr><th>Split</th><th>Answers</th><th>Sentences</th><th>False</th></tr>
+<tr><td>Total</td><td>123</td><td>595</td><td>102</td></tr>
+<tr><td>Fit</td><td>62</td><td>291</td><td>53</td></tr>
+<tr><td>Test</td><td>61</td><td>304</td><td>49</td></tr></table></div>
+<p>The split is done at the <b>answer level</b>, not randomly at sentence level. This matters because sentences belonging to the same answer should not leak across train/test.</p></section>
+
+<section><h2><b>3</b>Why do we split by answer?</h2>
+<p>Imagine Answer A: S1 “The Eiffel Tower is in Paris.”, S2 “It was completed in 1889.”, S3 “It is a famous landmark.” If S1 → training, S2 → testing, S3 → training, then the test sentence is still surrounded by almost identical contextual information. That’s undesirable. Instead:</p>
+<div class="code">Answer A → entirely TRAIN
+Answer B → entirely TEST</div>
+<p>So our experimental unit is the <b>answer</b> rather than individual sentences.</p></section>
+
+<div class="stage">Preprocessing</div>
+<section><h2><b>4</b>Second stage: stand-alone sentence preparation</h2>
+<p>An important preprocessing step that can easily be missed. FELM contains segments that are sometimes <b>context-dependent</b>, for example:</p>
+<div class="q">“He was born there in 1950.”</div>
+<p>If we feed that sentence alone to the confidence model, it doesn’t contain enough information. Who is “he”? What is “there”? So the project uses Llama to rewrite segments into standalone statements.</p></section>
+
+<section><h2><b>5</b>What does rewriting mean?</h2>
+<p>Original answer: “Albert Einstein was born in Germany. He later moved to Switzerland.” The second segment, “He later moved to Switzerland.”, is context-dependent. We ask Llama to rewrite it using the question and complete answer context:</p>
+<div class="q">“Albert Einstein later moved to Switzerland.”</div>
+<p>Extremely important constraint:</p>
+<div class="key">Don’t add or correct facts</div>
+<p>The rewrite should preserve the original claim. We are changing <b>expression</b>, not <b>factual content</b>.</p></section>
+
+<section><h2><b>6</b>How do we know the rewrite didn’t change the meaning?</h2>
+<p>We use NLI. Original O: “He later moved to Switzerland.” Rewritten R: “Albert Einstein later moved to Switzerland.” We test whether the rewritten statement entails the original:</p>
+<div class="eq">R ⇒ O</div>
+<ul><li>R = rewritten sentence, O = original sentence</li><li>If NLI supports this, we keep the rewrite. If not, we retain the original.</li></ul>
+<p>The project reports: <b>594</b> segments considered for rewriting. Of those, <b>385</b> were rewritten and <b>122</b> were rejected (original kept for rejected cases).</p></section>
+
+<section><h2><b>7</b>Why not simply rewrite everything?</h2>
+<p>Because an LLM rewrite can accidentally: add information, remove information, change a fact, or resolve an ambiguity incorrectly. Example. Original: “The company later expanded there.” Potential bad rewrite: “The company expanded to Germany in 2019.” The rewrite has introduced <b>Germany</b> and <b>2019</b>, which weren’t in the original. That’s unacceptable. Hence:</p>
+<div class="key">rewrite + NLI validation</div></section>
+
+<section><h2><b>8</b>Now we have a clean statement</h2>
+<p>Suppose our target statement is “The Eiffel Tower is located in Berlin.” Ground truth from FELM: <b>Z = F</b>. But <b>our algorithm does not know this</b>. That label is only used later for evaluation. This distinction is essential:</p>
+<div class="code">Algorithm:                         Evaluation:
+"The Eiffel Tower is located       predicted probability
+ in Berlin."                               ↓
+        ↓                          compare with
+     evidence                              ↓
+        ↓                          ground-truth label
+   probability</div>
+<p>The ground truth must not enter the inference process.</p></section>
+
+<div class="stage">Confidence and calibration</div>
+<section><h2><b>9</b>Third stage: root confidence</h2>
+<p>Now we ask Llama for confidence. Conceptually the model is prompted to judge:</p>
+<div class="q">Is the statement true or false?</div>
+<p>Suppose it produces token probabilities and our confidence score is:</p>
+<div class="eq">P(True) = 0.03        P(False) = 0.97
+
+S = P(True) / ( P(True) + P(False) ) = 0.03 / (0.03 + 0.97)
+
+S = 0.03</div>
+<p>This is the <b>observed confidence</b>.</p></section>
+
+<section><h2><b>10</b>Very important: S = 0.03 is not yet the final answer</h2>
+<p>A naïve system might say “Probability statement is true = 3%.” But that’s <b>not our final probabilistic model</b>. Why? Because the LLM’s confidence isn’t perfectly calibrated. We therefore transform it through the emission model.</p></section>
+
+<section><h2><b>11</b>Fourth stage: confidence calibration</h2>
+<p>Our project uses logistic calibration:</p>
+<div class="eq">P(T | S) = σ( a·logit(S) + b )
+
+σ(x) = 1 / (1 + e^(−x))          logit(S) = log( S / (1 − S) )</div>
+<p>The calibration parameters are fitted on the fit half. Our project reports:</p>
+<div class="key">a = 0.160,  b = 1.160</div>
+<p>using 291 fit-half sentences.</p></section>
+
+<section><h2><b>12</b>Calculate it for S = 0.03</h2>
+<div class="eq">logit(0.03) = log(0.03 / 0.97) ≈ −3.476
+
+a·logit(S) + b = 0.160(−3.476) + 1.160
+               = −0.556 + 1.160
+               = 0.604
+
+σ(0.604) = 1 / (1 + e^(−0.604)) ≈ 0.647</div>
+<div class="key">P(T | S) ≈ 0.647</div>
+<p><b>Notice something strange?</b> The raw Llama confidence was 0.03, but the calibrated P(T | S) is around 0.65. That can look shocking.</p></section>
+
+<section><h2><b>13</b>Why can this happen?</h2>
+<p>Because these two quantities are not the same thing. The calibration model is estimating P(T | S) from the empirical relationship between Llama scores and true labels. It is <b>not simply rescaling 0.03 into another version of 0.03</b>. The apparently surprising numbers arise because the fitted calibration is affected by the empirical base rate and the fit dataset. This is why we must distinguish:</p>
+<div class="eq">S      from      P(T | S)      and later from      P(Z_r = T | S, tree)</div></section>
+
+<section><h2><b>14</b>The emission model needs a likelihood</h2>
+<p>The HMT doesn’t directly use P(T | S) as its emission. It needs <b>P(S | Z)</b>. Why? Because the graphical model is Z → S: the hidden truth causes the observed confidence. So we need:</p>
+<div class="eq">P(S | T)      and      P(S | F)</div></section>
+
+<section><h2><b>15</b>Bayes’ theorem gives the conversion</h2>
+<div class="eq">P(T | S) = P(S | T) P(T) / P(S)
+P(S | T) = P(T | S) P(S) / P(T)
+P(S | F) = P(F | S) P(S) / P(F)</div>
+<p>The common P(S) term cancels in the final posterior. So the implementation can use proportional quantities:</p>
+<div class="eq">p(S | T) ∝ P(T | S) / P(T)
+p(S | F) ∝ (1 − P(T | S)) / (1 − P(T))</div>
+<p>The project uses <b>P(T) = 0.5</b> as the base rate in the logistic emission. Therefore:</p>
+<div class="eq">p(S | T) ∝ 2·P(T | S)
+p(S | F) ∝ 2·(1 − P(T | S))</div></section>
+
+<div class="stage">Tree construction and exact BP</div>
+<section><h2><b>16</b>Now the tree is built</h2>
+<p>Suppose our sentence contains multiple claims: “The Eiffel Tower was completed in 1889 and is located in Berlin.” There are two claims:</p>
+<div class="eq">C₁ : “The Eiffel Tower was completed in 1889.”
+C₂ : “The Eiffel Tower is located in Berlin.”</div>
+<div class="code">        R
+        |
+  decomposition
+     /     \
+    ▼       ▼
+   C1       C2</div>
+<p>The hidden variables are Z_R, Z_C1, Z_C2.</p></section>
+
+<section><h2><b>17</b>Why decomposition?</h2>
+<p>Because the truth of a multi-claim statement depends on the claims composing it. For this logical decomposition:</p>
+<div class="eq">R = C₁ ∧ C₂
+R = T  ⇒  C₁ = T ∧ C₂ = T</div>
+<p>But R = F doesn’t tell us exactly which child is false. Possibilities include (T,F), (F,T), (F,F), but <b>not</b> (T,T).</p></section>
+
+<section><h2><b>18</b>The decomposition transition</h2>
+<p>For k = 2 children, if parent is true: P(T,T | R=T) = 1, and every other configuration gets 0. If parent is false, there are 2² − 1 = 3 non-all-true configurations, so each gets 1/3.</p>
+<div class="tw"><table><tr><th>Parent</th><th>Children</th><th>Prob</th></tr>
+<tr><td>T</td><td>TT</td><td>1</td></tr><tr><td>T</td><td>TF</td><td>0</td></tr><tr><td>T</td><td>FT</td><td>0</td></tr><tr><td>T</td><td>FF</td><td>0</td></tr>
+<tr><td>F</td><td>TT</td><td>0</td></tr><tr><td>F</td><td>TF</td><td>1/3</td></tr><tr><td>F</td><td>FT</td><td>1/3</td></tr><tr><td>F</td><td>FF</td><td>1/3</td></tr></table></div>
+<p>This is exactly the decomposition transition we derived earlier.</p></section>
+
+<section><h2><b>19</b>Fifth stage: strategy selection</h2>
+<p>The project doesn’t decompose every statement endlessly. At a node, it determines whether decomposition is useful.</p>
+<div class="code">Statement
+   |
+   ▼
+Does it contain multiple claims?
+   |
+   ├── No ──→ strategy
+   |
+   └── Yes
+        |
+        ▼
+   decomposition</div>
+<p>Then the project can use <b>logical relation reasoning</b> or <b>statement perturbation/correction</b>, depending on the construction strategy.</p></section>
+
+<section><h2><b>20</b>Logical Relation strategy</h2>
+<p>Parent: “The Eiffel Tower was completed in 1889 and is located in Berlin.” Decomposition children: (1) completed in 1889, (2) located in Berlin. Now we ask:</p>
+<div class="q">How do these child statements relate logically to the parent?</div>
+<p>For each child, NLI compares <b>child → parent</b> and <b>parent → child</b>. This gives a relationship.</p></section>
+
+<section><h2><b>21</b>NLI relationship types</h2>
+<p>The project uses:</p>
+<div class="key">{ equivalence, entailment, reverse entailment, contradiction, neutral }</div>
+<p>Our example. Child: “The Eiffel Tower was completed in 1889.” Parent: “The Eiffel Tower was completed in 1889 and is located in Berlin.” The child does not entail the complete conjunction, but the parent entails the child. Therefore the relation is <b>reverse entailment</b> under the project’s direction convention.</p></section>
+
+<section><h2><b>22</b>Why do we care about the relationship?</h2>
+<p>Because it determines P(Z_child | Z_parent). For reverse entailment:</p>
+<div class="eq">P(C = T | R = T) = 1
+P(C = T | R = F) = 0.5</div>
+<p>So the NLI relationship becomes a probabilistic transition. This is where <b>language understanding</b> gets converted into a <b>probability factor</b>.</p></section>
+
+<section><h2><b>23</b>The tree now contains both evidence and logic</h2>
+<div class="code">          R
+      S_R = 0.03
+          |
+   ┌──────┴──────┐
+   C1            C2
+ S_C1 = ...    S_C2 = ...
+   |             |
+ NLI relation  NLI relation
+   |             |
+   └──────┬──────┘
+          ▼
+     HMT inference</div>
+<p>Each node has an <b>observed confidence</b>, and each edge has a <b>logical relationship</b>.</p></section>
+
+<section><h2><b>24</b>Sixth stage: bottom-up belief propagation</h2>
+<p>Now we finally use the equation from Part 4. For a leaf:</p>
+<div class="eq">β(z, u) = P(S_u | Z_u = z)
+
+If C1 is a leaf:
+β(T, C1) = P(S_C1 | Z_C1 = T)
+β(F, C1) = P(S_C1 | Z_C1 = F)</div></section>
+
+<section><h2><b>25</b>Internal node equation</h2>
+<p>For the root:</p>
+<div class="eq">β(z, R) = P(S_R | Z_R = z) · Σ_{z_c} P(z_c | z) · Π_c β(z_c, c)</div>
+<p>For two children:</p>
+<div class="eq">β(z, R) = P(S_R | Z_R = z) · Σ_{z₁,z₂} P(z₁, z₂ | z) · β(z₁, C1) · β(z₂, C2)</div>
+<p>There are only 2² = 4 child assignments.</p></section>
+
+<section><h2><b>26</b>Then calculate the root posterior</h2>
+<p>Once we have β(T, R) and β(F, R), we combine them with the root prior P(Z_R = T) = 0.5 and P(Z_R = F) = 0.5:</p>
+<div class="eq">P(Z_R = T) = β(T,R)·0.5 / ( β(T,R)·0.5 + β(F,R)·0.5 )
+
+The 0.5 factors cancel:
+P(Z_R = T) = β(T,R) / ( β(T,R) + β(F,R) )</div>
+<p>That is the sentence’s <b>tree posterior</b>.</p></section>
+
+<div class="stage">Answer-level graph and loopy BP (Extension 1)</div>
+<section><h2><b>27</b>But we’re not done</h2>
+<p>This is where Extension 1 enters. Suppose the answer contains:</p>
+<div class="code">S1: The Eiffel Tower was completed in 1889.
+S2: The Eiffel Tower is located in Berlin.
+S3: The Eiffel Tower is a French landmark.</div>
+<p>We have Tree₁, Tree₂, Tree₃. Each gives a root variable Z₁, Z₂, Z₃. Now we compare the sentence roots with NLI.</p></section>
+
+<section><h2><b>28</b>Cross-sentence NLI</h2>
+<p>Consider S2 “The Eiffel Tower is located in Berlin.” and S3 “The Eiffel Tower is a French landmark.” These are related. But because NLI can generate false contradiction labels, our selected cross-link rule is:</p>
+<div class="key">no_contradiction</div>
+<p>So contradiction links are discarded. Useful entailment-type links remain.</p></section>
+
+<section><h2><b>29</b>Construct answer graph</h2>
+<div class="code">  Tree 1
+    |
+   R1
+    |
+    |
+   R2
+    |
+  Tree 2
+    |
+    |
+   R3
+  Tree 3</div>
+<p>with cross-link factors ψ₁₂, ψ₂₃, etc. The complete answer is now a <b>factor graph</b>.</p></section>
+
+<section><h2><b>30</b>The joint model</h2>
+<p>We can write the unnormalized distribution as:</p>
+<div class="eq">P(Z | S) ∝ Π_i φ_i(Z_i) · Π_j ψ_j(Z_tree,j) · Π_{(i,k)∈E} ψ_ik(Z_i, Z_k)</div>
+<p>Three types of information are now interacting:</p>
+<ul><li><b>Local evidence</b>: φ_i</li><li><b>Within-sentence logical structure</b>: ψ_tree</li><li><b>Across-sentence relationships</b>: ψ_link</li></ul>
+<p>This is the full probabilistic model.</p></section>
+
+<section><h2><b>31</b>Seventh stage: loopy BP</h2>
+<p>If the answer graph has no cycles, exact message passing can solve it. But if we have</p>
+<div class="code">R1 ── R2
+|      |
+|      |
+R3 ────┘</div>
+<p>we have a loop. Therefore <b>loopy belief propagation</b> is used.</p></section>
+
+<section><h2><b>32</b>Start with uniform messages</h2>
+<p>Every message starts as m = (0.5, 0.5), meaning P(F) = 0.5 and P(T) = 0.5. No directional information has propagated yet.</p></section>
+
+<section><h2><b>33</b>Factor → variable message</h2>
+<p>For factor f:</p>
+<div class="eq">m_{f→v}(z_v) ∝ Σ_{z_f \ z_v} f(z_f) · Π_{u≠v} m_{u→f}(z_u)</div>
+<p>So the factor combines (1) its logical relationship and (2) incoming beliefs from the other variables, and sends a new message.</p></section>
+
+<section><h2><b>34</b>Variable → factor message</h2>
+<p>A variable combines all information except the target factor:</p>
+<div class="eq">m_{v→f}(z_v) ∝ Π_{g∈N(v)\f} m_{g→v}(z_v)</div>
+<p>This prevents immediate self-feedback.</p></section>
+
+<section><h2><b>35</b>Repeat until convergence</h2>
+<p>The system repeatedly updates messages. For example:</p>
+<div class="code">Round 1 → Round 2 → Round 3 → ... → Round 24
+→ Δ &lt; 10^-6 → Converged</div>
+<p>In our real test: <b>122/122</b> answer graphs converged. Median ≈ <b>24</b> rounds. Maximum: <b>76</b> rounds.</p></section>
+
+<section><h2><b>36</b>Final sentence posterior</h2>
+<p>After convergence:</p>
+<div class="eq">b_i(z) ∝ Π_{f∈N(i)} m_{f→i}(z)
+
+Normalize:
+P(Z_i = T) = b_i(T) / ( b_i(T) + b_i(F) )</div>
+<p>Now we finally have the quantity we wanted. For example: S1 → P(True) = 0.91, S2 → 0.22, S3 → 0.84. So the system identifies <b>S2 as suspicious</b>.</p></section>
+
+<div class="stage">Evaluation</div>
+<section><h2><b>37</b>Eighth stage: evaluation</h2>
+<p>Now, and <b>only now</b>, we compare predictions with FELM ground truth. The hallucination score is P(hallucination) = 1 − P(T).</p>
+<div class="tw"><table><tr><th>Sentence</th><th>Ground truth</th><th>Predicted P(T)</th><th>Hallucination score</th></tr>
+<tr><td>S1</td><td>T</td><td>0.91</td><td>0.09</td></tr><tr><td>S2</td><td>F</td><td>0.22</td><td>0.78</td></tr><tr><td>S3</td><td>T</td><td>0.84</td><td>0.16</td></tr></table></div>
+<p>S2 is ranked as the most likely hallucination.</p></section>
+
+<section><h2><b>38</b>Then we evaluate the whole test set</h2>
+<p>For all 304 test sentences, we collect p̂_i = P(Z_i = T) and ground-truth labels y_i ∈ {0, 1}. Then calculate:</p>
+<ul><li><b>AUROC</b>: measures ranking quality across thresholds.</li><li><b>AUC-PR</b>: particularly useful because false examples are the minority.</li><li><b>F1</b>: at a chosen classification threshold.</li></ul>
+<p>Final comparison reported by the project:</p>
+<div class="tw"><table><tr><th>Method</th><th>AUROC</th><th>AUC-PR</th></tr>
+<tr><td>Raw Llama</td><td>0.745</td><td>0.329</td></tr><tr><td>BTProp tree</td><td>0.741</td><td>0.403</td></tr>
+<tr><td><b>Answer graph</b></td><td><b>0.773</b></td><td><b>0.475</b></td></tr></table></div></section>
+
+<section><h2><b>39</b>Notice something very interesting</h2>
+<p>The tree model has AUROC = 0.741, which is slightly <b>below</b> raw Llama (0.745), but AUC-PR is 0.403 &gt; 0.329. So AUROC alone doesn’t tell the entire story. The tree is substantially better in precision-recall space. Then the answer graph improves further: 0.403 → 0.475. This is why we report multiple metrics.</p></section>
+
+<div class="stage">Extension 2 and the big picture</div>
+<section><h2><b>40</b>Now put the surrogate into this pipeline</h2>
+<p>Our second extension changes the confidence stage. Instead of every node → Llama → S, we use:</p>
+<div class="code">Root              Child
+ ↓                 ↓
+Llama             Surrogate
+ ↓                 ↓
+S_root            Ŝ_child</div>
+<p>Then both enter the same HMT equations. So the inference code doesn’t change. Only the <b>source of S_u</b> changes.</p></section>
+
+<section><h2><b>41</b>Full final architecture</h2>
+<div class="code">FELM
+ ▼
+Answer + labels
+ ▼
+preprocessing
+ ▼
+standalone rewriting
+ ▼
+clean statements
+ ▼
+┌───────────┴───────────┐
+ROOT                  CHILD
+ │                      │
+Llama               Surrogate*
+ └───────────┬───────────┘
+ ▼
+confidence S
+ ▼
+logistic calibration
+ ▼
+emission P(S|Z)
+ ▼
+tree construction
+ ▼
+NLI relationships
+ ▼
+Hidden Markov Tree
+ ▼
+exact tree BP
+ ▼
+sentence-level roots
+ ▼
+cross-sentence NLI
+ ▼
+answer-level graph
+ ▼
+loopy BP
+ ▼
+P(Z_i = True)
+ ▼
+evaluation
+ ▼
+AUROC / AUC-PR / F1</div></section>
+
+<section><h2><b>42</b>The entire project in one equation</h2>
+<p>At the highest level, our system is trying to estimate:</p>
+<div class="eq">P(Z₁, …, Z_n | S₁, …, S_n, R, G)</div>
+<ul><li>Z_i = hidden truth of statement i</li><li>S_i = observed/model confidence</li><li>R = within-sentence logical relationships</li><li>G = cross-sentence NLI relationships</li></ul>
+<p>The factorization is approximately:</p>
+<div class="eq">P(Z | S,R,G) ∝ Π_i φ_i(Z_i) · Π_j ψ_j(Z_tree,j) · Π_{(i,k)∈G} ψ_ik(Z_i, Z_k)
+                 confidence     within-sentence       cross-sentence
+                 evidence       reasoning             reasoning</div>
+<p>and we estimate the desired marginals:</p>
+<div class="key">P(Z_i = T | S, R, G)</div></section>
+
+<section><h2><b>43</b>What each component is actually responsible for</h2>
+<p>This is worth memorizing.</p>
+<div class="tw"><table><tr><th>Component</th><th>Job</th></tr>
+<tr><td>Llama</td><td>Produce answer + confidence evidence</td></tr>
+<tr><td>Standalone rewriting</td><td>Remove contextual ambiguity</td></tr>
+<tr><td>NLI</td><td>Determine logical relationships</td></tr>
+<tr><td>Calibration</td><td>Convert raw confidence into probabilistic evidence</td></tr>
+<tr><td>HMT</td><td>Model within-sentence dependencies</td></tr>
+<tr><td>Exact BP</td><td>Infer sentence truth on tree structures</td></tr>
+<tr><td>Answer graph</td><td>Connect related sentences</td></tr>
+<tr><td>Loopy BP</td><td>Infer globally when cross-links create cycles</td></tr>
+<tr><td>Surrogate</td><td>Cheaply approximate selected Llama confidence calls</td></tr>
+<tr><td>FELM labels</td><td>Evaluation only</td></tr></table></div>
+<p>This table is essentially the architecture of the project.</p></section>
+
+<section><h2><b>44</b>What is the role of each probability?</h2>
+<p>There are several probabilities, and confusing them is one of the easiest ways to misunderstand the project.</p>
+<ol><li><b>Llama token probability</b>, e.g. P(True) = 0.03. This is model-token probability.</li>
+<li><b>Raw confidence</b>: S = P(True) / (P(True) + P(False))</li>
+<li><b>Calibrated truth probability</b>: P(T | S), obtained using σ(a·logit S + b)</li>
+<li><b>Emission likelihood</b>: P(S | Z), used by the HMT.</li>
+<li><b>Final posterior</b>: P(Z = T | all evidence). This is the actual output we care about.</li></ol></section>
+</main>
+<script>
+var t=document.getElementById('toc');
+document.querySelectorAll('section').forEach(function(s,i){s.id='s'+(i+1);var a=document.createElement('a');a.href='#s'+(i+1);a.textContent=i+1;t.appendChild(a)});
+</script></body></html>
